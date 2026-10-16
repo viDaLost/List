@@ -466,20 +466,65 @@ test("Telegram Serverless handler trusts platform identity and replies only in p
 
 test("phone setup deploys Telegram Serverless without persisting the CLI token",async()=>{
  const {deployTelegramBot}=await load("lib/telegram-deploy"),{telegramSources}=await load("lib/telegram-sources");
- const token="app123:"+"x".repeat(32),secret="bridge-".repeat(8),calls=[];
+ const token="app123:"+"x".repeat(32),secret="bridge-".repeat(8),calls=[];let migrated=false,runs=0,webhook=false;
  const transport=async(url,options)=>{const path=new URL(url).pathname.replace('/app123/manage','');const body=options.body?JSON.parse(options.body):undefined;calls.push({url,path,options,body});let result;
   if(path==='/get')result={revision:7,canonical_modules:{}};
+  else if(path==='/migrate'&&options.method==='GET')result={db_changes:migrated?[]:[{kind:'create_table',table:'settings',status:'good'},{kind:'create_table',table:'users',status:'good'}]};
   else if(path==='/migrate'&&body.dry_run)result={db_changes:[{kind:'create_table',table:'settings',status:'good'},{kind:'create_table',table:'users',status:'good'}]};
-  else if(path==='/migrate'){assert.deepEqual(body.apply,['create_table:settings','create_table:users']);result={};}
+  else if(path==='/migrate'){assert.deepEqual(body.apply,['create_table:settings','create_table:users']);assert.equal(body.schema,undefined);migrated=true;result={};}
   else if(path==='/deploy'){assert.equal(body.expected_revision,7);assert.deepEqual(body.changed_sources,telegramSources);result={revision:8};}
-  else if(path==='/run'){assert.equal(body.module,'handlers/message');assert.ok(body.sources['handlers/message'].includes("import setup from '../lib/setup.js'"));assert.notEqual(body.sources['handlers/message'],telegramSources['handlers/message']);assert.equal(body.args.bridgeSecret,secret);result={result:{ready:true,username:'list_test_bot'}};}
-  else if(path==='/webhook/sync')result={in_sync:true};
-  else if(path==='/webhook')result={in_sync:true};
+  else if(path==='/run'){assert.ok(migrated);assert.equal(body.module,'handlers/message');assert.ok(body.sources['handlers/message'].includes(runs++?"SELECT count(*) AS count FROM users":"import setup from '../lib/setup.js'"));assert.notEqual(body.sources['handlers/message'],telegramSources['handlers/message']);assert.equal(body.args.bridgeSecret,secret);result={result:{ready:true,username:'list_test_bot'}};}
+  else if(path==='/webhook/sync'){webhook=true;result={in_sync:true};}
+  else if(path==='/webhook')result={in_sync:webhook};
   else throw new Error('Unexpected call');
   return Response.json({ok:true,result});
  };
- assert.deepEqual(await deployTelegramBot(token,secret,transport),{username:'list_test_bot',appId:'app123'});assert.equal(calls.length,7);
+ assert.deepEqual(await deployTelegramBot(token,secret,transport),{username:'list_test_bot',appId:'app123'});assert.equal(calls.length,11);assert.equal(runs,2);
  for(const call of calls){assert.equal(call.options.headers.Authorization,'Bearer '+token);assert.ok(!call.url.includes(token));assert.ok(!JSON.stringify(call.body||{}).includes(token));assert.equal(new URL(call.url).origin,'https://cloud.telegram.org');assert.equal(call.options.redirect,'manual');assert.equal(call.options.cache,'no-store');}
+});
+
+test('setup refuses to run a bot while live migrations are pending or unverified',async()=>{
+ const {deployTelegramBot}=await load('lib/telegram-deploy');
+ for(const live of [{db_changes:[{status:'good',kind:'create_table',table:'settings'}]},{}]){
+  let runs=0;
+  const transport=async(url,options)=>{
+   const p=new URL(url).pathname,body=options.body?JSON.parse(options.body):{};
+   if(p.endsWith('/get'))return Response.json({ok:true,result:{revision:1,canonical_modules:{}}});
+   if(p.endsWith('/migrate')&&options.method==='GET')return Response.json({ok:true,result:live});
+   if(p.endsWith('/migrate')&&body.dry_run)return Response.json({ok:true,result:{db_changes:[]}});
+   if(p.endsWith('/run'))runs++;
+   return Response.json({ok:true,result:{}});
+  };
+  await assert.rejects(()=>deployTelegramBot('app123:x','s'.repeat(40),transport),/таблиц|создал таблицы/);assert.equal(runs,0);
+ }
+});
+
+test('webhook completion uses read-back and resumes without losing pending messages',async()=>{
+ const {deployTelegramBot}=await load('lib/telegram-deploy');
+ for(const scenario of ['already-active','empty-success','active-after-sync-error','transient-error','permanent-error']){
+  let synced=scenario==='already-active',syncs=0,runs=0;
+  const transport=async(url,options)=>{
+   const p=new URL(url).pathname;
+   if(p.endsWith('/get'))return Response.json({ok:true,result:{revision:3,canonical_modules:{}}});
+   if(p.endsWith('/migrate'))return Response.json({ok:true,result:{db_changes:[]}});
+   if(p.endsWith('/run')){runs++;return Response.json({ok:true,result:{result:{ready:true,username:'list_test_bot'}}});}
+   if(p.endsWith('/webhook/sync')){
+    syncs++;assert.deepEqual(JSON.parse(options.body),{});
+    if(scenario==='already-active')throw new Error('Must not sync an active webhook');
+    if(scenario==='permanent-error')return Response.json({ok:false,description:'app123:x'},{status:400});
+    if(scenario==='transient-error'&&syncs===1)return Response.json({ok:false},{status:503});
+    synced=true;
+    if(scenario==='active-after-sync-error')return Response.json({ok:false},{status:500});
+    return Response.json({ok:true});
+   }
+   if(p.endsWith('/webhook'))return Response.json({ok:true,result:{in_sync:synced}});
+   return Response.json({ok:true,result:{}});
+  };
+  const result=deployTelegramBot('app123:x','s'.repeat(40),transport);
+  if(scenario==='permanent-error')await assert.rejects(()=>result,error=>error.message.includes('HTTP 400')&&!error.message.includes('app123:x'));
+  else assert.equal((await result).username,'list_test_bot');
+  assert.equal(runs,2);assert.equal(syncs,scenario==='already-active'?0:scenario==='transient-error'?2:1);
+ }
 });
 
 test('Telegram setup rejects redirects without forwarding credentials',async()=>{
