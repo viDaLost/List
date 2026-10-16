@@ -1,1 +1,1 @@
-{"name":"list-telegram-serverless","private":true,"type":"module","scripts":{"deploy":"npx --package=@tgcloud/cli@0.2.0 tgcloud push","migrate":"npx --package=@tgcloud/cli@0.2.0 tgcloud migrate --safe --yes","status":"npx --package=@tgcloud/cli@0.2.0 tgcloud status"}}
+{"name":"list-telegram-serverless","private":true,"type":"module","scripts":{"deploy":"npx --package=@tgcloud/cli@0.2.0 tgcloud push","migrate":"npx --package=@tgcloud/cli@0.2.0 tgcloud migrate --safe","status":"npx --package=@tgcloud/cli@0.2.0 tgcloud status"}}

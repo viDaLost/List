@@ -13,24 +13,29 @@ import { createElement } from "react";
 const root = process.cwd(), out = path.join(root, ".sites-runtime/test-build");
 await mkdir(out, { recursive: true });
 const files = [
-  "lib/article.ts", "lib/reading.ts", "lib/object-storage.ts",  "lib/standalone-auth.ts", "lib/browser-access.ts", "lib/server.ts", "lib/operations.ts", "app/components/article-view.tsx", "app/components/interactive-blocks.tsx", "app/components/reader-experience.tsx", "app/components/editor.tsx",
+  "lib/article.ts", "lib/reading.ts", "lib/object-storage.ts",  "lib/standalone-auth.ts", "lib/browser-access.ts", "lib/telegram-deploy.ts", "lib/telegram-sources.ts", "lib/server.ts", "lib/operations.ts", "app/components/article-view.tsx", "app/components/interactive-blocks.tsx", "app/components/reader-experience.tsx", "app/components/editor.tsx",
   "app/api/articles/route.ts", "app/api/articles/[id]/route.ts", "app/api/slug/route.ts",
   "app/api/uploads/route.ts", "app/media/[id]/route.ts", "app/api/views/[id]/route.ts",
   "app/api/admin/route.ts", "app/api/admin/backups/[id]/route.ts", "app/api/reports/route.ts",
-  "app/api/access/route.ts", "app/api/telegram/connect/route.ts", "app/api/telegram/bridge/route.ts",
+  "app/api/access/route.ts", "app/api/admin/telegram/route.ts", "app/api/telegram/connect/route.ts", "app/api/telegram/bridge/route.ts",
 ];
 await writeFile(path.join(out, "platform.mjs"), "export const env = globalThis.__listEnv;\n");
 await writeFile(path.join(out, "auth.mjs"), `export async function getAuthorUser() { return globalThis.__listUser; } export function authorAccessPath(path) { return "/signin-with-chatgpt?return_to="+encodeURIComponent(path); }\n`);
 for (const file of files) {
   let source = await readFile(path.join(root, file), "utf8");
-  source = source.replace(/from (["'])([^"']+)\1/g, (all, quote, name) => {
+  const syntax = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const replacements = [];
+  for (const node of syntax.statements) {
+    if ((!ts.isImportDeclaration(node) && !ts.isExportDeclaration(node)) || !node.moduleSpecifier || !ts.isStringLiteral(node.moduleSpecifier)) continue;
+    const name = node.moduleSpecifier.text;
     let target;
     if (name === "cloudflare:workers") target = path.join(out, "platform.mjs");
     else if (name === "@/app/author-access") target = path.join(out, "auth.mjs");
     else if (name.startsWith("@/")) target = path.join(out, name.slice(2) + ".mjs");
     else if (name.startsWith(".")) target = path.resolve(out, path.dirname(file), name + ".mjs");
-    return target ? "from " + quote + pathToFileURL(target).href + quote : all;
-  });
+    if (target) replacements.push({ start: node.moduleSpecifier.getStart(syntax), end: node.moduleSpecifier.end, value: JSON.stringify(pathToFileURL(target).href) });
+  }
+  for (const replacement of replacements.sort((a,b) => b.start-a.start)) source = source.slice(0,replacement.start)+replacement.value+source.slice(replacement.end);
   const compiled = ts.transpileModule(source, { fileName: file, compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;
   const target = path.join(out, file.replace(/\.tsx?$/, ".mjs"));
   await mkdir(path.dirname(target), { recursive: true });
@@ -457,4 +462,37 @@ test("Telegram Serverless handler trusts platform identity and replies only in p
   assert.equal(saved[0][":tg"],98765);assert.equal(saved[0][":author"],a.author.id);assert.equal(sent[0].chat_id,98765);assert.ok(sent[0].reply_markup.inline_keyboard[0][0].url.includes("/access#ticket="));assert.ok(!JSON.stringify(sent).includes(secret));
   await handler({chat:{type:"private",id:98765},from:{id:98765},text:"/articles"});assert.match(sent[1].text,/пока нет/);
  }finally{delete globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET;delete globalThis.__tgSdk;}
+});
+
+test("phone setup deploys Telegram Serverless without persisting the CLI token",async()=>{
+ const {deployTelegramBot}=await load("lib/telegram-deploy"),{telegramSources}=await load("lib/telegram-sources");
+ const token="app123:"+"x".repeat(32),secret="bridge-".repeat(8),calls=[];
+ const transport=async(url,options)=>{const path=new URL(url).pathname.replace('/app123/manage','');const body=options.body?JSON.parse(options.body):undefined;calls.push({url,path,options,body});let result;
+  if(path==='/get')result={revision:7,canonical_modules:{}};
+  else if(path==='/migrate'&&body.dry_run)result={db_changes:[{kind:'create_table',table:'settings',status:'good'},{kind:'create_table',table:'users',status:'good'}]};
+  else if(path==='/migrate'){assert.deepEqual(body.apply,['create_table:settings','create_table:users']);result={};}
+  else if(path==='/deploy'){assert.equal(body.expected_revision,7);assert.deepEqual(body.changed_sources,telegramSources);result={revision:8};}
+  else if(path==='/run'){assert.equal(body.module,'handlers/message');assert.ok(body.sources['handlers/message'].includes("import setup from '../lib/setup.js'"));assert.notEqual(body.sources['handlers/message'],telegramSources['handlers/message']);assert.equal(body.args.bridgeSecret,secret);result={result:{ready:true,username:'list_test_bot'}};}
+  else if(path==='/webhook/sync')result={in_sync:true};
+  else if(path==='/webhook')result={in_sync:true};
+  else throw new Error('Unexpected call');
+  return Response.json({ok:true,result});
+ };
+ assert.deepEqual(await deployTelegramBot(token,secret,transport),{username:'list_test_bot',appId:'app123'});assert.equal(calls.length,7);
+ for(const call of calls){assert.equal(call.options.headers.Authorization,'Bearer '+token);assert.ok(!call.url.includes(token));assert.ok(!JSON.stringify(call.body||{}).includes(token));assert.equal(new URL(call.url).origin,'https://cloud.telegram.org');assert.equal(call.options.redirect,'error');}
+});
+
+test("phone setup refuses existing bots, unsafe migrations and invalid credentials before writing",async()=>{
+ const {deployTelegramBot}=await load('lib/telegram-deploy'),token='app123:'+"z".repeat(32),secret='bridge-'.repeat(8);
+ let writes=0;
+ await assert.rejects(()=>deployTelegramBot('123:ordinary-bot-token',secret,async()=>{writes++;}),/CLI/);assert.equal(writes,0);
+ await assert.rejects(()=>deployTelegramBot(token,secret,async()=>Response.json({ok:true,result:{revision:1,canonical_modules:{'handlers/message':'another bot'}}})),/другой проект/);
+ const transport=async(url,options)=>{if(url.endsWith('/get'))return Response.json({ok:true,result:{revision:1,canonical_modules:{}}});if(url.endsWith('/migrate')&&JSON.parse(options.body).dry_run)return Response.json({ok:true,result:{db_changes:[{status:'warning',kind:'drop_table',table:'important'}]}});writes++;throw new Error('Must not write');};
+ await assert.rejects(()=>deployTelegramBot(token,secret,transport),/несовместимые/);assert.equal(writes,0);
+ await assert.rejects(()=>deployTelegramBot(token,secret,async()=>Response.json({ok:false,description:token},{status:403})),error=>!error.message.includes(token)&&error.message.includes('не принял'));
+});
+
+test("Telegram setup API is restricted to the service owner",async()=>{
+ const setup=await load('app/api/admin/telegram/route'),previous=globalThis.__listUser;
+ try{globalThis.__listUser=null;assert.equal((await setup.POST(req('POST',{token:'not-real'}))).status,401);globalThis.__listUser=other;assert.equal((await setup.POST(req('POST',{token:'not-real'}))).status,403);globalThis.__listUser=owner;assert.equal((await setup.POST(req('POST',{token:'not-real'},'https://evil.test'))).status,403);}finally{globalThis.__listUser=previous;}
 });

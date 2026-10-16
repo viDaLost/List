@@ -1,3 +1,4 @@
+import "./prepare-telegram-bot.mjs";
 import { spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 const build = spawnSync(process.execPath, ["scripts/run-framework.mjs", "build"], { stdio: "inherit", env: { ...process.env, LIST_TARGET: "cloudflare" } });
