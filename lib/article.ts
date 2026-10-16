@@ -9,13 +9,16 @@ export const THEMES = {
 export const ACCENTS = ["#a34e32", "#3c6550", "#385d8a", "#8c5696", "#bb8b32", "#ce6f69"];
 export const BLOCK_TYPES = ["paragraph", "heading", "quote", "list", "image", "divider", "button", "summary", "checklist", "details"] as const;
 export type BlockType = typeof BLOCK_TYPES[number];
-export type Block = { id: string; type: BlockType; text: string; url?: string; label?: string };
+export type Block = { id: string; type: BlockType; text: string; url?: string; label?: string;background?:string;color?:string };
+export type ArticleFooter={text:string;mark:string;buttons:{label:string;url:string}[]};
+export const DEFAULT_FOOTER:ArticleFooter={text:'Спасибо, что прочитали.',mark:'✳',buttons:[]};
 export type Article = {
   id?: string; title: string; subtitle: string; author: string; slug: string; blocks: Block[];
   cover: string; theme: keyof typeof THEMES; font: "serif" | "sans"; accent: string;
   alignment: "left" | "center"; wide: boolean; shareTitle: string; shareDescription: string; shareImage: string;
   published: boolean; views?: number; version?: number; createdAt?: number; updatedAt?: number;
   blocked?: boolean; blockedReason?: string;
+  background?:string;footer?:ArticleFooter;
 };
 export class InputError extends Error {}
 const reserved = new Set(["api", "media", "demo", "help", "signin-with-chatgpt", "signout-with-chatgpt", "callback", "favicon", "robots", "sitemap", "_next", "assets"]);
@@ -47,6 +50,7 @@ function field(obj: Record<string, unknown>, key: string, limit: number, fallbac
   if (typeof value !== "string" || value.length > limit) throw new InputError("Поле «" + key + "» слишком длинное или имеет неверный формат.");
   return value.trim();
 }
+function color(value:unknown){if(value===undefined||value==='')return '';if(typeof value!=='string'||!/^#[0-9a-f]{6}$/i.test(value))throw new InputError('Выберите цвет в формате #AABBCC.');return value;}
 export function normalizeArticle(input: unknown): Article {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new InputError("Не удалось прочитать статью.");
   const obj = input as Record<string, unknown>, title = field(obj, "title", 160);
@@ -65,7 +69,8 @@ export function normalizeArticle(input: unknown): Article {
     if (ids.has(id)) id = crypto.randomUUID();
     ids.add(id);
     if (block.label !== undefined && (typeof block.label !== "string" || block.label.length > 120)) throw new InputError("Название раскрывающегося блока должно быть короче 120 символов.");
-    return { id, type, text, ...(url ? { url } : {}), ...(type === "details" ? { label: typeof block.label === "string" && block.label.trim() ? block.label.trim() : "Подробнее" } : {}) };
+    const background=color(block.background),textColor=color(block.color);
+    return { id, type, text, ...(background?{background}:{}),...(textColor?{color:textColor}:{}),...(url ? { url } : {}), ...(type === "details" ? { label: typeof block.label === "string" && block.label.trim() ? block.label.trim() : "Подробнее" } : {}) };
   });
   if (JSON.stringify(blocks).length > 200000) throw new InputError("Статья слишком большая: сократите текст.");
   if (!blocks.some((b) => b.text.trim() || b.type === "image")) throw new InputError("Добавьте текст или изображение.");
@@ -76,9 +81,16 @@ export function normalizeArticle(input: unknown): Article {
   const coverInput = field(obj, "cover", 2048), shareImageInput = field(obj, "shareImage", 2048);
   const cover = safeUrl(coverInput, true), shareImage = safeUrl(shareImageInput, true);
   if ((coverInput && !cover) || (shareImageInput && !shareImage)) throw new InputError("Изображение должно использовать HTTPS.");
+  let footer=DEFAULT_FOOTER;
+  if(obj.footer!==undefined){
+    if(!obj.footer||typeof obj.footer!=='object'||Array.isArray(obj.footer))throw new InputError('Некорректное окончание статьи.');
+    const f=obj.footer as Record<string,unknown>;
+    if(!Array.isArray(f.buttons)||f.buttons.length>5)throw new InputError('В конце статьи можно добавить до пяти кнопок.');
+    footer={text:field(f,'text',1000),mark:field(f,'mark',20),buttons:f.buttons.map((item:unknown)=>{if(!item||typeof item!=='object')throw new InputError('Некорректная кнопка.');const button=item as Record<string,unknown>,label=field(button,'label',60),url=safeUrl(field(button,'url',2048));if(!label||!url)throw new InputError('У каждой кнопки должны быть подпись и безопасная ссылка.');return {label,url};})};
+  }
   return {
     title, author: field(obj, "author", 80, "Автор"), subtitle: field(obj, "subtitle", 500),
-    slug: normalizeSlug(field(obj, "slug", 120)), blocks, cover, theme,
+    slug: normalizeSlug(field(obj, "slug", 120)), blocks, cover, theme,background:color(obj.background),footer,
     font: obj.font === "sans" ? "sans" : "serif", accent, alignment: obj.alignment === "center" ? "center" : "left",
     wide: obj.wide === true, shareTitle: field(obj, "shareTitle", 120), shareDescription: field(obj, "shareDescription", 300), shareImage, published: obj.published === true,
   };

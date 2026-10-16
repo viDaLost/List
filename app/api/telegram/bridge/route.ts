@@ -1,23 +1,38 @@
-import {env} from "cloudflare:workers";
-import {timingSafeEqual} from "node:crypto";
-import {Buffer} from "node:buffer";
-import {endpoint,sql,HttpError} from "@/lib/server";
-import {hashKey,issueAccessLink,type AuthorRecord} from "@/lib/browser-access";
-import {rateLimit} from "@/lib/operations";
+import {env} from 'cloudflare:workers';
+import {timingSafeEqual} from 'node:crypto';
+import {Buffer} from 'node:buffer';
+import {endpoint,sql,HttpError,ownedArticle} from '@/lib/server';
+import {telegramAuthor} from '@/lib/telegram-identity';
+import {rateLimit,backupArticle,audit} from '@/lib/operations';
 export async function POST(request:Request){return endpoint(async()=>{
- const expected=env.TELEGRAM_BRIDGE_SECRET||"",actual=request.headers.get("x-list-bridge")||"";
- if(expected.length<32||actual.length!==expected.length||!timingSafeEqual(Buffer.from(actual),Buffer.from(expected)))throw new HttpError(403,"Forbidden");
- const raw=await request.text();if(raw.length>8000)throw new HttpError(413,"Payload too large");let body;try{body=JSON.parse(raw);if(!body||typeof body!=="object"||Array.isArray(body))throw new Error("Invalid object");}catch{throw new HttpError(400,"Invalid JSON");}
- if(body.action==="configure"){if(!/^[A-Za-z0-9_]{5,32}$/.test(body.username))throw new HttpError(400,"Invalid bot username");await sql().prepare("INSERT INTO settings (key,value) VALUES ('telegram_username',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(body.username).run();return Response.json({ok:true});}
- const tg=String(body.telegramId||"");if(!/^[1-9][0-9]{0,15}$/.test(tg))throw new HttpError(400,"Invalid user");await rateLimit("tg-bridge:"+tg,10,60000);
- let author:AuthorRecord|null=null;
- if(body.action==="bind"){
-  const hash=await hashKey(String(body.token||""));const grant=await sql().prepare("SELECT author_id FROM access_links WHERE key_hash=? AND kind='connect' AND expires_at>?").bind(hash,Date.now()).first<{author_id:string}>();if(!grant)throw new HttpError(400,"Ссылка привязки истекла. Создайте новую на сайте.");
-  const existing=await sql().prepare("SELECT id FROM authors WHERE telegram_id=?").bind(tg).first<{id:string}>();if(existing&&existing.id!==grant.author_id)throw new HttpError(409,"Telegram уже связан с другими статьями. Отправьте /start, чтобы открыть их. Для этого браузера сохраните отдельный ключ.");
-  const result=await sql().batch([sql().prepare("UPDATE authors SET telegram_id=? WHERE id=? AND (telegram_id IS NULL OR telegram_id=?)").bind(tg,grant.author_id,tg),sql().prepare("DELETE FROM access_links WHERE key_hash=?").bind(hash)]);if(!result[0].meta.changes)throw new HttpError(409,"Этот доступ уже привязан к другому Telegram.");
+ const expected=env.TELEGRAM_BRIDGE_SECRET||'',actual=request.headers.get('x-list-bridge')||'';
+ const a=Buffer.from(actual),b=Buffer.from(expected);
+ if(expected.length<32||a.length!==b.length||!timingSafeEqual(a,b))throw new HttpError(403,'Forbidden');
+ const raw=await request.text();if(raw.length>8000)throw new HttpError(413,'Payload too large');let body;
+ try{body=JSON.parse(raw);if(!body||typeof body!=='object'||Array.isArray(body))throw new Error();}catch{throw new HttpError(400,'Invalid JSON');}
+ if(body.action==='configure'){
+  if(!/^[A-Za-z0-9_]{5,32}$/.test(body.username))throw new HttpError(400,'Invalid bot username');
+  if(body.botId!==undefined&&(!Number.isSafeInteger(body.botId)||body.botId<=0))throw new HttpError(400,'Invalid bot ID');
+  const statements=[sql().prepare("INSERT INTO settings (key,value) VALUES ('telegram_username',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(body.username)];
+  if(body.botId)statements.push(sql().prepare("INSERT INTO settings (key,value) VALUES ('telegram_bot_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(String(body.botId)));
+  await sql().batch(statements);return Response.json({ok:true});
  }
- author=await sql().prepare("SELECT id,is_admin,telegram_id FROM authors WHERE telegram_id=?").bind(tg).first<AuthorRecord>();if(!author)throw new HttpError(404,"Сначала откройте на сайте «Доступ к статьям» и привяжите этот браузер к боту.");
- if(body.action==="articles"){const articles=await sql().prepare("SELECT title,slug,published FROM articles WHERE owner_id=? ORDER BY updated_at DESC LIMIT 20").bind(author.id).all();return Response.json({authorId:author.id,articles:articles.results},{headers:{"Cache-Control":"no-store"}});}
- if(!["restore","bind"].includes(body.action))throw new HttpError(400,"Invalid action");
- const ticket=await issueAccessLink(author.id,"restore",600000);return Response.json({authorId:author.id,url:new URL(request.url).origin+"/access#ticket="+ticket},{headers:{"Cache-Control":"private, no-store"}});
+ if(!['start','articles','article','delete'].includes(body.action))throw new HttpError(400,'Откройте обновлённое меню бота командой /start. Привязка по ключам больше не используется.');
+ const tg=String(body.telegramId||'');if(!/^[1-9][0-9]{0,15}$/.test(tg))throw new HttpError(400,'Invalid user');
+ await rateLimit('tg-bridge:'+tg,30,60000);
+ const author=await telegramAuthor(tg);
+ if(body.action==='start')return Response.json({authorId:author.id},{headers:{'Cache-Control':'private, no-store'}});
+ if(body.action==='articles'){
+  const articles=await sql().prepare('SELECT id,title,slug,published,version FROM articles WHERE owner_id=? ORDER BY updated_at DESC LIMIT 100').bind(author.id).all();
+  return Response.json({authorId:author.id,articles:articles.results},{headers:{'Cache-Control':'private, no-store'}});
+ }
+ if(typeof body.articleId!=='string')throw new HttpError(400,'Неверная статья.');
+ const article=await ownedArticle(body.articleId,author.id);
+ if(body.action==='article')return Response.json({article:{id:article.id,title:article.title,published:!!article.published,version:article.version}},{headers:{'Cache-Control':'private, no-store'}});
+ if(!Number.isInteger(body.version)||body.version!==article.version)throw new HttpError(409,'Статья изменилась. Выберите её заново перед удалением.');
+ await rateLimit('tg-delete:'+author.id,20,60000);await backupArticle(article,'telegram-delete');
+ const result=await sql().prepare('DELETE FROM articles WHERE id=? AND owner_id=? AND version=?').bind(article.id,author.id,body.version).run();
+ if(!result.meta.changes)throw new HttpError(409,'Статья изменилась. Обновите список.');
+ await audit(author.id,'telegram-delete',article.id);
+ return Response.json({ok:true},{headers:{'Cache-Control':'private, no-store'}});
 });}

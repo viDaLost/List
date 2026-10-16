@@ -29,6 +29,13 @@
       "when": 1792166926409,
       "tag": "0003_common_iceman",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1792182699540,
+      "tag": "0004_article_appearance",
+      "breakpoints": true
     }
   ]
 }

@@ -2,6 +2,7 @@ import { normalizeArticle } from "@/lib/article";
 import { author, endpoint, sql, readBody, articleValues, ownedArticle, HttpError, checkOrigin, fromRow } from "@/lib/server";
 import { backupArticle, rateLimit } from "@/lib/operations";
 type Context = { params: Promise<{ id: string }> };
+export async function GET(_request:Request,context:Context){return endpoint(async()=>{const user=await author(),{id}=await context.params;return Response.json({article:fromRow(await ownedArticle(id,user.userId))},{headers:{'Cache-Control':'private, no-store'}});});}
 export async function PUT(request: Request, context: Context) {
   return endpoint(async () => {
     const user = await author(), { id } = await context.params, current = await ownedArticle(id, user.userId);
@@ -15,7 +16,7 @@ export async function PUT(request: Request, context: Context) {
     await backupArticle(current, "edit");
     const results = await sql().batch([
       sql().prepare("INSERT INTO paths (slug, article_id, created_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM articles WHERE id=? AND owner_id=? AND version=?) ON CONFLICT(slug) DO NOTHING").bind(article.slug, id, now, id, user.userId, current.version),
-      sql().prepare("UPDATE articles SET title=?, author=?, subtitle=?, slug=?, blocks=?, cover=?, theme=?, font=?, accent=?, alignment=?, wide=?, share_title=?, share_description=?, share_image=?, published=?, updated_at=?, version=version+1 WHERE id=? AND owner_id=? AND version=? AND EXISTS (SELECT 1 FROM paths WHERE slug=? AND article_id=articles.id)").bind(...articleValues(article), now, id, user.userId, current.version, article.slug),
+      sql().prepare("UPDATE articles SET title=?, author=?, subtitle=?, slug=?, blocks=?, cover=?, theme=?, font=?, accent=?, alignment=?, wide=?, share_title=?, share_description=?, share_image=?, published=?, appearance=?, updated_at=?, version=version+1 WHERE id=? AND owner_id=? AND version=? AND EXISTS (SELECT 1 FROM paths WHERE slug=? AND article_id=articles.id)").bind(...articleValues(article), now, id, user.userId, current.version, article.slug),
     ]);
     if (!results[1].meta.changes) throw new HttpError(409, "Статья была изменена в другом окне. Откройте её заново.");
     return Response.json({ article: { ...fromRow(current), ...article, updatedAt: now, version: current.version + 1 } });
@@ -26,9 +27,11 @@ export async function DELETE(request: Request, context: Context) {
     checkOrigin(request);
     const user = await author(), { id } = await context.params;
     const current = await ownedArticle(id, user.userId);
+    if(request.body){const body=await readBody(request);if(body.version!==current.version)throw new HttpError(409,'Статья изменилась. Обновите список перед удалением.');}
     await rateLimit("delete:" + user.userId, 20, 60000);
     await backupArticle(current, "delete");
-    await sql().prepare("DELETE FROM articles WHERE id=? AND owner_id=?").bind(id, user.userId).run();
+    const removed=await sql().prepare("DELETE FROM articles WHERE id=? AND owner_id=? AND version=?").bind(id, user.userId,current.version).run();
+    if(!removed.meta.changes)throw new HttpError(409,'Статья изменилась. Обновите список.');
     return Response.json({ ok: true });
   });
 }

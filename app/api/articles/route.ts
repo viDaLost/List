@@ -18,7 +18,7 @@ export async function POST(request: Request) {
     if ((count?.n ?? 0) >= 100) throw new HttpError(429, "В первой версии можно сохранить до 100 статей.");
     const id = crypto.randomUUID(), now = Date.now();
     await sql().batch([
-      sql().prepare("INSERT INTO articles (id, owner_id, title, author, subtitle, slug, blocks, cover, theme, font, accent, alignment, wide, share_title, share_description, share_image, published, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id, user.userId, ...articleValues(article), now, now),
+      sql().prepare("INSERT INTO articles (id, owner_id, title, author, subtitle, slug, blocks, cover, theme, font, accent, alignment, wide, share_title, share_description, share_image, published, appearance, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id, user.userId, ...articleValues(article), now, now),
       sql().prepare("INSERT INTO paths (slug, article_id, created_at) VALUES (?, ?, ?)").bind(article.slug, id, now),
     ]);
     return Response.json({ article: { ...article, id, views: 0, version: 1, createdAt: now, updatedAt: now } }, { status: 201 });

@@ -36,12 +36,12 @@ export async function POST(request: Request, context: Context) {
       await backupArticle(current, "before-restore");
       const results = await db.batch([
         db.prepare("INSERT INTO paths (slug, article_id, created_at) SELECT ?, ?, ? WHERE EXISTS (SELECT 1 FROM articles WHERE id=? AND version=?) ON CONFLICT(slug) DO NOTHING").bind(restored.slug, old.id, now, old.id, current.version),
-        db.prepare("UPDATE articles SET title=?, author=?, subtitle=?, slug=?, blocks=?, cover=?, theme=?, font=?, accent=?, alignment=?, wide=?, share_title=?, share_description=?, share_image=?, published=?, updated_at=?, version=version+1 WHERE id=? AND version=? AND EXISTS (SELECT 1 FROM paths WHERE slug=? AND article_id=articles.id)").bind(...articleValues(restored), now, old.id, current.version, restored.slug),
+        db.prepare("UPDATE articles SET title=?, author=?, subtitle=?, slug=?, blocks=?, cover=?, theme=?, font=?, accent=?, alignment=?, wide=?, share_title=?, share_description=?, share_image=?, published=?, appearance=?, updated_at=?, version=version+1 WHERE id=? AND version=? AND EXISTS (SELECT 1 FROM paths WHERE slug=? AND article_id=articles.id)").bind(...articleValues(restored), now, old.id, current.version, restored.slug),
       ]);
       if (!results[1].meta.changes) throw new HttpError(409, "Автор уже изменил статью. Обновите список перед восстановлением.");
     } else {
       await db.batch([
-        db.prepare("INSERT INTO articles (id, owner_id, title, author, subtitle, slug, blocks, cover, theme, font, accent, alignment, wide, share_title, share_description, share_image, published, created_at, updated_at, version, views, moderation_blocked, moderation_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(old.id, old.owner_id, ...articleValues(restored), old.created_at, now, old.version + 1, old.views, old.moderation_blocked || 0, old.moderation_reason || ""),
+        db.prepare("INSERT INTO articles (id, owner_id, title, author, subtitle, slug, blocks, cover, theme, font, accent, alignment, wide, share_title, share_description, share_image, published, appearance, created_at, updated_at, version, views, moderation_blocked, moderation_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(old.id, old.owner_id, ...articleValues(restored), old.created_at, now, old.version + 1, old.views, old.moderation_blocked || 0, old.moderation_reason || ""),
         db.prepare("INSERT INTO paths (slug, article_id, created_at) VALUES (?, ?, ?)").bind(restored.slug, old.id, now),
       ]);
     }

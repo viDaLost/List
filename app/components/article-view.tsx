@@ -1,5 +1,5 @@
 import { Fragment, type CSSProperties, type ReactNode } from "react";
-import { type Article, type Block, THEMES, safeUrl, readingTime, articleOutline, sectionId } from "@/lib/article";
+import { type Article, type Block, THEMES, DEFAULT_FOOTER,safeUrl, readingTime, articleOutline, sectionId } from "@/lib/article";
 import { ReaderChecklist, SectionLink } from "./interactive-blocks";
 
 export function inline(text: string): ReactNode[] {
@@ -35,10 +35,10 @@ export function BlockView({ block, articleKey }: { block: Block; articleKey?: st
 }
 export function articleStyle(article: Article): CSSProperties {
   const theme = THEMES[article.theme] || THEMES.paper;
-  return { "--paper": theme.bg, "--ink": theme.text, "--muted": theme.muted, "--accent": article.accent, "--article-font": article.font === "serif" ? "Georgia, 'Times New Roman', serif" : "'Arial', sans-serif", "--article-width": article.wide ? "860px" : "680px" } as CSSProperties;
+  return { "--paper": article.background||theme.bg, "--ink": theme.text, "--muted": theme.muted, "--accent": article.accent, "--article-font": article.font === "serif" ? "Georgia, 'Times New Roman', serif" : "'Arial', sans-serif", "--article-width": article.wide ? "860px" : "680px" } as CSSProperties;
 }
 export function ArticleView({ article, preview = false, summaryOnly = false }: { article: Article; preview?: boolean; summaryOnly?: boolean }) {
-  const outline = articleOutline(article);
+  const outline = articleOutline(article),footer=article.footer||DEFAULT_FOOTER;
   const blocks = summaryOnly ? article.blocks.filter((b) => b.type === "summary" && b.text.trim()) : article.blocks;
   return <article className={"article-view article-paper " + (preview ? "in-preview" : "")} style={articleStyle(article)}>
     <div className="article-inner">
@@ -50,8 +50,10 @@ export function ArticleView({ article, preview = false, summaryOnly = false }: {
       </header>
       {article.cover && !summaryOnly && <figure className="article-cover"><img src={safeUrl(article.cover, true)} alt="" /></figure>}
       {!summaryOnly && outline.length > 1 && <details className="article-toc"><summary><span>В этой статье</span><span>Разделы · {outline.length} <span aria-hidden="true">⌄</span></span></summary><nav aria-label="Оглавление статьи">{outline.map((item, i) => <a key={item.id} href={"#" + item.id}><span>{String(i + 1).padStart(2, "0")}</span>{item.title}</a>)}</nav></details>}
-      <div className="article-body">{blocks.map((block) => <div id={sectionId(block.id)} data-block-id={block.id} className="reader-block" key={block.id}><BlockView block={block} articleKey={preview ? undefined : article.id} /></div>)}</div>
-      <footer className="article-end"><span>✳</span><p>Спасибо, что прочитали.</p></footer>
+      <div className="article-body">{blocks.map((block) => <div id={sectionId(block.id)} data-block-id={block.id} className={"reader-block"+(block.background||block.color?" colored-block":"")} style={{background: block.background,color:block.color,...(block.color?{"--ink":block.color,"--muted":block.color,"--accent":block.color}:{} )} as CSSProperties} key={block.id}><BlockView block={block} articleKey={preview ? undefined : article.id} /></div>)}</div>
+      <ArticleEnding footer={footer}/>
     </div>
   </article>;
 }
+
+export function ArticleEnding({footer}:{footer:import('@/lib/article').ArticleFooter}){if(!footer.text&&!footer.mark&&!footer.buttons.length)return null;return <footer className="article-end custom-article-end">{footer.mark&&<span>{footer.mark}</span>}{footer.text&&<p>{footer.text}</p>}{footer.buttons.length>0&&<nav className="article-footer-buttons" aria-label="Ссылки автора">{footer.buttons.map((button,i)=><a key={i} href={safeUrl(button.url)} target="_blank" rel="noopener noreferrer">{button.label}</a>)}</nav>}</footer>;}

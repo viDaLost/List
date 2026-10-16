@@ -36,12 +36,13 @@ export type ArticleRow = {
   id: string; owner_id: string; title: string; author: string; subtitle: string; slug: string; blocks: string; cover: string;
   theme: Article["theme"]; font: Article["font"]; accent: string; alignment: Article["alignment"]; wide: number;
   share_title: string; share_description: string; share_image: string; published: number; views: number; version: number; created_at: number; updated_at: number;
-  moderation_blocked: number; moderation_reason: string;
+  moderation_blocked: number; moderation_reason: string;appearance?:string;
 };
 export function fromRow(r: ArticleRow): Article {
-  return { id: r.id, title: r.title, author: r.author, subtitle: r.subtitle, slug: r.slug, blocks: JSON.parse(r.blocks), cover: r.cover, theme: r.theme, font: r.font, accent: r.accent, alignment: r.alignment, wide: !!r.wide, shareTitle: r.share_title, shareDescription: r.share_description, shareImage: r.share_image, published: !!r.published, views: r.views, version: r.version, createdAt: r.created_at, updatedAt: r.updated_at, blocked: !!r.moderation_blocked, blockedReason: r.moderation_reason || "" };
+  const appearance=JSON.parse(r.appearance||'{}');
+  return { background:appearance.background||'',footer:appearance.footer,id: r.id, title: r.title, author: r.author, subtitle: r.subtitle, slug: r.slug, blocks: JSON.parse(r.blocks), cover: r.cover, theme: r.theme, font: r.font, accent: r.accent, alignment: r.alignment, wide: !!r.wide, shareTitle: r.share_title, shareDescription: r.share_description, shareImage: r.share_image, published: !!r.published, views: r.views, version: r.version, createdAt: r.created_at, updatedAt: r.updated_at, blocked: !!r.moderation_blocked, blockedReason: r.moderation_reason || "" };
 }
-export function articleValues(a: Article) { return [a.title, a.author, a.subtitle, a.slug, JSON.stringify(a.blocks), a.cover, a.theme, a.font, a.accent, a.alignment, Number(a.wide), a.shareTitle, a.shareDescription, a.shareImage, Number(a.published)]; }
+export function articleValues(a: Article) { return [a.title, a.author, a.subtitle, a.slug, JSON.stringify(a.blocks), a.cover, a.theme, a.font, a.accent, a.alignment, Number(a.wide), a.shareTitle, a.shareDescription, a.shareImage, Number(a.published),JSON.stringify({background:a.background||'',footer:a.footer})]; }
 export async function ownedArticle(id: string, ownerId: string): Promise<ArticleRow> {
   const row = await sql().prepare("SELECT * FROM articles WHERE id = ? AND owner_id = ?").bind(id, ownerId).first<ArticleRow>();
   if (!row) throw new HttpError(404, "Статья не найдена.");

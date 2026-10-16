@@ -3,11 +3,13 @@ import { useEffect, useLayoutEffect, useRef, useState, type TextareaHTMLAttribut
 import { AlignCenter, AlignLeft, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, Bold, BookOpen, Check, CheckCircle2, ChevronDown, CircleHelp, Cloud, Copy, Download, Ellipsis, ExternalLink, Eye, FileText, GripVertical, Heading2, ImagePlus, Italic, Globe2, Shield, Link2, List, ListChecks, Loader2, LockKeyhole, Menu, Minus, Monitor, Palette, Plus, Quote, Redo2, Search, Send, Smartphone, Sparkles, SquareChevronDown, Trash2, Type, Undo2, Upload, X, Zap } from "lucide-react";
 import { ACCENTS, THEMES, type Article, type Block, type BlockType, type TemplateKind, articleText, articleUrl, articleOutline, articleTemplate, blankArticle, normalizeArticle, normalizeSlug, readingTime, SITE_HOST, suggestSlug } from "@/lib/article";
 import { ArticleView, articleStyle } from "./article-view";
+import {clientFetch} from '@/lib/client-access';
+import ArticleEndingEditor from './article-ending-editor';
 
 type User = { userId: string; fullName: string | null; displayName: string };
 type Tab = "text" | "design" | "link";
 type ModalType = "publish" | "success" | "delete" | "discard" | "help" | "new" | "blocks" | "outline" | null;
-type Props = { user: User | null; initial: Article; signIn: string; signOut: string; adminAllowed?: boolean };
+type Props = { user: User | null; initial: Article; signIn: string; signOut: string; adminAllowed?: boolean; context?:'browser'|'telegram';entry?:{screen:'new'|'edit';articleId?:string} };
 function AutoText(props: TextareaHTMLAttributes<HTMLTextAreaElement>) {
   const ref = useRef<HTMLTextAreaElement>(null);
   useLayoutEffect(() => { const el = ref.current; if (el) { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; } }, [props.value]);
@@ -36,7 +38,7 @@ function Modal({ title, close, children }: { title: string; close: () => void; c
   return <div className="modal-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) close(); }}><div className="modal" role="dialog" aria-modal="true" aria-label={title} ref={ref} tabIndex={-1}><div className="modal-header"><h2>{title}</h2><button className="icon-button" aria-label="Закрыть" onClick={close}><X size={20} /></button></div>{children}</div></div>;
 }
 async function jsonRequest(url: string, init?: RequestInit) {
-  const response = await fetch(url, { cache: "no-store", ...init });
+  const response = await clientFetch(url, { cache: "no-store", ...init });
   let data: { error?: string; articles: Article[]; article: Article; available: boolean; url: string };
   try { data = await response.json() as typeof data; } catch { throw new Error("Сервер не ответил. Проверьте соединение и попробуйте ещё раз."); }
   if (!response.ok) throw new Error(data.error || "Не удалось выполнить действие.");
@@ -47,7 +49,8 @@ function dateLabel(time?: number) {
   return new Date(time).toLocaleDateString("ru", { day: "numeric", month: "short" });
 }
 
-export default function Editor({ user, initial, signIn, signOut, adminAllowed = false }: Props) {
+export default function Editor({ user, initial, signIn, signOut, adminAllowed = false,context='browser',entry }: Props) {
+  const homeHref=context==='telegram'?'/_list/app?screen=articles':'/';
   const [article, setArticle] = useState<Article>(initial), articleRef = useRef(initial);
   const [articles, setArticles] = useState<Article[]>([]);
   const [ready, setReady] = useState(false), [loaded, setLoaded] = useState(!user);
@@ -67,7 +70,7 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
   const [successArticle, setSuccessArticle] = useState<Article | null>(null);
   const [toast, setToast] = useState(""), toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [slugState, setSlugState] = useState<{ kind: "checking" | "ok" | "error" | "idle"; text: string }>({ kind: "idle", text: "Без даты и случайных символов" });
-  const storageKey = "list:draft:" + (user?.userId || "guest");
+  const storageKey = (context==='telegram'?'list:telegram:draft:':'list:draft:') + (user?.userId || "guest");
   const undoStack = useRef<Article[]>([]), redoStack = useRef<Article[]>([]), lastUndoTime = useRef(0);
   const [historyCounts, setHistoryCounts] = useState([0, 0]), [keyboardOpen, setKeyboardOpen] = useState(false);
   function commit(next: Article, changed = true, remember = true) {
@@ -109,19 +112,22 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
   }
   useEffect(() => {
     let restored = false;
+    const targetId=entry?.articleId||new URLSearchParams(window.location.search).get('article');
     try {
-      const raw = localStorage.getItem(storageKey) || (user ? localStorage.getItem("list:draft:guest") : null);
+      const raw = entry?.screen==='new'?null:localStorage.getItem(storageKey) || (context==='browser'&&user ? localStorage.getItem("list:draft:guest") : null);
       if (raw) {
         const saved = JSON.parse(raw), a = saved.article;
-        if (a && typeof a.title === "string" && typeof a.slug === "string" && Array.isArray(a.blocks) && a.blocks.length <= 200 && a.blocks.every((b: Block) => b && typeof b.id === "string" && typeof b.text === "string") && a.theme in THEMES) {
+        if (a && (!targetId||a.id===targetId) && typeof a.title === "string" && typeof a.slug === "string" && Array.isArray(a.blocks) && a.blocks.length <= 200 && a.blocks.every((b: Block) => b && typeof b.id === "string" && typeof b.text === "string") && a.theme in THEMES) {
           commit(a, saved.dirty === true, false); restored = true;
         }
       }
     } catch {}
     setReady(true);
     if (user) loadLibrary().then((items) => {
+      if(entry?.screen==='new')return;
+      if(targetId&&!items?.some(a=>a.id===targetId)){setLoadError('Эта статья недоступна в вашем пространстве.');return;}
       if (!items?.length || dirtyRef.current) return;
-      const latest = items.find((item) => item.id === articleRef.current.id);
+      const latest = items.find((item) => item.id === (targetId||articleRef.current.id));
       if (latest) commit(latest, false);
       else if (!restored) commit(items[0], false);
     });
@@ -174,13 +180,13 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   });
-  async function save(publish?: boolean): Promise<Article | undefined> {
+  async function save(publish?: boolean,quiet=false): Promise<Article | undefined> {
     if (saveLock.current || uploading) return;
     if (!user) { notify("Откройте главную страницу и нажмите «Начать писать»."); return; }
     const current = articleRef.current;
     let normalized: Article;
-    try { normalized = normalizeArticle({ ...current, slug: current.slug || suggestSlug(current.title), published: publish ?? current.published }); }
-    catch (e) { notify((e as Error).message); return; }
+    try { normalized = normalizeArticle({ ...current, slug: quiet&&!current.id&&(!current.slug||current.slug===suggestSlug(current.title))?"draft-"+crypto.randomUUID():publish&&current.slug.startsWith("draft-")?suggestSlug(current.title):current.slug||suggestSlug(current.title), published: publish ?? current.published }); }
+    catch (e) { if(!quiet)notify((e as Error).message); return; }
     saveLock.current = true; setBusy(true);
     const revision = editRevision.current;
     try {
@@ -190,11 +196,18 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
       else commit({ ...articleRef.current, id: saved.id, version: saved.version, createdAt: saved.createdAt, updatedAt: saved.updatedAt, published: saved.published, views: saved.views }, true);
       setArticles((items) => [saved, ...items.filter((a) => a.id !== saved.id)]);
       try { if (user && localStorage.getItem("list:draft:guest")) localStorage.removeItem("list:draft:guest"); } catch {}
-      notify(saved.published ? "Статья опубликована. Ссылку можно открыть." : "Черновик сохранён в этом браузере.");
+      if(!quiet)notify(saved.published ? "Статья опубликована. Ссылку можно открыть." : context==='telegram'?"Черновик сохранён в ваших статьях Telegram.":"Черновик сохранён в этом браузере.");
       return saved;
-    } catch (e) { notify((e as Error).message); }
+    } catch (e) { if(quiet)setLocalStatus('Черновик на устройстве — нажмите «Сохранить»');else notify((e as Error).message); }
     finally { saveLock.current = false; setBusy(false); }
   }
+  useEffect(()=>{
+    if(!ready||!loaded||!user||!dirty||article.published||!article.title.trim()||uploading)return;
+    const timer=setTimeout(()=>{if(!saveLock.current)void save(false,true);},1800);
+    return()=>clearTimeout(timer);
+  // A draft is saved after a typing pause; published pages require explicit update.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[article,dirty,ready,loaded,uploading,user]);
   function switchTo(next: Article) {
     if (uploading || saveLock.current) { notify("Дождитесь завершения загрузки или сохранения."); return; }
     const run = () => { commit(next, false); undoStack.current = []; redoStack.current = []; setHistoryCounts([0,0]); setPreview(false); setTab("text"); setSidebarOpen(false); setActiveBlock(next.blocks[0]?.id || ""); setMoreOpen(false); };
@@ -314,13 +327,13 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
   return <div className={"workspace workspace-v2 " + (keyboardOpen ? "keyboard-open" : "")}>
     <input className="sr-only" type="file" accept="image/jpeg,image/png,image/webp,image/gif,image/heic,image/heif" ref={fileInput} onChange={(e) => { const f = e.target.files?.[0]; if (f) void upload(f); }} />
     <header className="workspace-header">
-      <div className="header-brand"><button className="icon-button mobile-only" aria-label="Мои статьи" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button><a className="wordmark" href="/"><span className="brand-icon">л</span>лист<span className="wordmark-dot">.</span></a><span className="brand-divider" /><span className="brand-caption">Публикации с характером</span></div>
+      <div className="header-brand"><button className="icon-button mobile-only" aria-label="Мои статьи" onClick={() => setSidebarOpen(true)}><Menu size={21} /></button><a className="wordmark" href={homeHref}><span className="brand-icon">л</span>лист<span className="wordmark-dot">.</span></a><span className="brand-divider" /><span className="brand-caption">Публикации с характером</span></div>
       <div className="header-center"><span className="private-pill"><Globe2 size={12} />Публичный сервис</span></div>
       <div className="header-actions">
         <span className="save-status"><span className={dirty ? "status-dot dirty" : "status-dot"} />{busy ? "Сохраняем…" : dirty ? localStatus : article.id ? "Сохранено" : "На устройстве"}</span>
         {!user && <a href={signIn} target="_top" className="btn btn-light sign-in">Войти</a>}
-        {article.published ? <a className="btn btn-ghost save-draft" href={articleUrl((articles.find((item) => item.id === article.id) || article).slug)} target="_blank" rel="noopener noreferrer"><ExternalLink size={15} />Открыть</a> : <button className="btn btn-ghost save-draft" aria-label="Сохранить черновик" title="Сохранить черновик" onClick={() => void save()} disabled={busy || uploading}><Cloud size={16} /><span>Сохранить</span></button>}
-        <button className="btn btn-primary publish-top" onClick={() => setModal("publish")} disabled={busy || uploading || article.blocked}>{busy ? <Loader2 className="spin" size={16} /> : <ArrowUpRight size={16} />}<span>{article.blocked ? "Снята модератором" : article.published ? "Обновить" : "Опубликовать"}</span></button>
+        {article.published ? <a className="btn btn-ghost save-draft" href={context==='telegram'?'/_list/app?screen=read&article='+article.id:articleUrl((articles.find((item) => item.id === article.id) || article).slug)} target={context==='telegram'?undefined:'_blank'} rel="noopener noreferrer"><ExternalLink size={15} />Открыть</a> : <button className="btn btn-ghost save-draft" aria-label="Сохранить черновик" title="Сохранить черновик" onClick={() => void save()} disabled={busy || uploading}><Cloud size={16} /><span>Сохранить</span></button>}
+
       </div>
     </header>
     {sidebarOpen && <button className="sidebar-backdrop" aria-label="Закрыть меню" onClick={() => setSidebarOpen(false)} />}
@@ -367,7 +380,8 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
               <button onClick={() => addBlock("image")} title="Добавить фотографию" aria-label="Добавить фотографию"><ImagePlus size={18} /></button>
             </div>
             <div className="editable-blocks article-body">
-              {article.blocks.map((block, index) => <div className={"editable-block block-" + block.type + (activeBlock === block.id ? " focused" : "")} key={block.id}>
+              {article.blocks.map((block, index) => <div className={"editable-block block-" + block.type + (activeBlock === block.id ? " focused" : "")} key={block.id} onClick={()=>setActiveBlock(block.id)} style={{background:block.background,color:block.color,...(block.color?{"--ink":block.color,"--muted":block.color,"--accent":block.color}:{})} as React.CSSProperties}>
+                {activeBlock===block.id&&<div className="block-color-controls"><label>Фон<input type="color" aria-label="Фон этого блока" value={block.background||THEMES[article.theme].bg} onChange={e=>updateBlock(block.id,{background:e.target.value})}/></label><label>Текст<input type="color" aria-label="Цвет текста этого блока" value={block.color||THEMES[article.theme].text} onChange={e=>updateBlock(block.id,{color:e.target.value})}/></label><button onClick={()=>updateBlock(block.id,{background:undefined,color:undefined})}>Сбросить цвета</button></div>}
                 <div className="block-controls"><button className="block-grip" aria-label="Настройки блока " title="Переместить или удалить блок" aria-expanded={blockMenu === block.id} onClick={() => { setBlockMenu(blockMenu === block.id ? "" : block.id); setActiveBlock(block.id); }}><GripVertical size={16} /></button>{blockMenu === block.id && <div className="dropdown block-dropdown"><button disabled={index === 0} onClick={() => moveBlock(block.id, -1)}><ArrowUp size={14} />Выше</button><button disabled={index === article.blocks.length - 1} onClick={() => moveBlock(block.id, 1)}><ArrowDown size={14} />Ниже</button><button className="danger" onClick={() => removeBlock(block.id)}><Trash2 size={14} />Удалить блок</button></div>}</div>
                 {block.type === "divider" ? <hr className="article-divider" /> : block.type === "image" ? <figure><img src={block.url} alt={block.text} /><input className="caption-input" aria-label="Описание изображения" value={block.text} placeholder="Подпись к изображению" onFocus={() => setActiveBlock(block.id)} onChange={(e) => updateBlock(block.id, { text: e.target.value })} /><button className="replace-block-image" onClick={() => selectUpload(block.id)}><ImagePlus size={14} />Заменить</button></figure> : block.type === "button" ? <div className="button-block-edit"><label>ТЕКСТ КНОПКИ<input value={block.text} aria-label="Текст кнопки" maxLength={100} onChange={(e) => updateBlock(block.id, { text: e.target.value })} onFocus={() => setActiveBlock(block.id)} /></label><label>ССЫЛКА<input value={block.url || ""} type="url" aria-label="Адрес кнопки" placeholder="https://…" onChange={(e) => updateBlock(block.id, { url: e.target.value })} onFocus={() => setActiveBlock(block.id)} /></label></div> : ["summary", "details", "checklist"].includes(block.type) ? <div className="special-block-editor">
                   <div className="special-block-label">{block.type === "summary" ? <Zap size={15} /> : block.type === "checklist" ? <ListChecks size={15} /> : <SquareChevronDown size={15} />}<span>{block.type === "summary" ? "Суть за минуту" : block.type === "checklist" ? "Чек-лист для читателя" : "Раскрывающийся блок"}</span></div>
@@ -378,9 +392,11 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
               </div>)}
             </div>
             <div className="add-block-area"><div className="add-line" /><button className="add-block-button" onClick={() => setModal("blocks")}><Plus size={17} />Добавить блок</button><div className="add-line" /></div>
+            <ArticleEndingEditor value={article.footer} onChange={footer=>patch({footer})}/>
             <div className="canvas-footer"><span>{wordCount} слов · {readingTime(article)} мин чтения</span><span>Слова имеют значение <span>✳</span></span></div>
           </div>
         </div>}
+        <div className="article-publish-bottom"><button className="btn btn-light" disabled={busy||uploading} onClick={()=>setPreview(!preview)}><Eye size={17}/>{preview?'Вернуться к тексту':'Предпросмотр'}</button><button className="btn btn-primary" onClick={()=>setModal('publish')} disabled={busy||uploading||article.blocked}>{busy?<Loader2 className="spin" size={18}/>:<Send size={18}/>}<span>{article.blocked?'Снята модератором':article.published?'Обновить статью':'Опубликовать статью'}</span></button></div>
       </div>
     </main>
     {tab !== "text" && <button className="inspector-backdrop" aria-label="Вернуться к тексту" onClick={() => setTab("text")} />}
@@ -398,12 +414,13 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
           <div className="cover-setting"><div><strong>Обложка статьи</strong><span>Задайте настроение истории</span></div><button className="icon-button bordered" aria-label="Загрузить обложку" onClick={() => selectUpload("cover")} disabled={uploading}><Upload size={16} /></button></div>
           {article.cover && <img className="cover-small" src={article.cover} alt="Текущая обложка" />}
           <button className="btn btn-light full" onClick={() => setPreview(!preview)}><Eye size={15} />{preview ? "Вернуться в редактор" : "Посмотреть глазами читателя"}</button>
-          <div className="autosave-note"><Cloud size={16} /><p>Черновик сохраняется на этом устройстве автоматически. Нажмите «Сохранить», чтобы открыть его в своём доступе с другого устройства.</p></div>
+          <div className="autosave-note"><Cloud size={16} /><p>Черновик сохраняется автоматически. В Telegram он доступен вам на разных устройствах; в обычном браузере — только в этом браузере.</p></div>
           {article.id && <div className="article-stats"><span>Просмотры <strong>{article.views || 0}</strong></span><span>Изменено <strong>{dateLabel(article.updatedAt)}</strong></span></div>}
         </>}
         {tab === "design" && <>
           <p className="panel-intro">Немного деталей — и история звучит по-вашему.</p>
-          <div className="setting-group"><span className="field-label">Настроение страницы</span><div className="theme-grid">{Object.entries(THEMES).map(([key, theme]) => <button key={key} className={"theme-option " + (article.theme === key ? "selected" : "")} onClick={() => patch({ theme: key as Article["theme"], ...(key === "ink" && article.accent === "#a34e32" ? { accent: "#bb8b32" } : {}) })} aria-pressed={article.theme === key}><span className="theme-sample" style={{ background: theme.bg, color: theme.text }}><span>Aa</span><i /><i /><span className="theme-check">{article.theme === key && <Check size={13} />}</span></span><span>{theme.name}</span></button>)}</div></div>
+          <div className="setting-group"><span className="field-label">Настроение страницы</span><div className="theme-grid">{Object.entries(THEMES).map(([key, theme]) => <button key={key} className={"theme-option " + (article.theme === key ? "selected" : "")} onClick={() => patch({ theme: key as Article["theme"], background:"", ...(key === "ink" && article.accent === "#a34e32" ? { accent: "#bb8b32" } : {}) })} aria-pressed={article.theme === key}><span className="theme-sample" style={{ background: theme.bg, color: theme.text }}><span>Aa</span><i /><i /><span className="theme-check">{article.theme === key && <Check size={13} />}</span></span><span>{theme.name}</span></button>)}</div></div>
+          <div className="setting-group"><span className="field-label">Общий фон статьи</span><div className="color-options">{['#fdfcf9','#ffffff','#f4ecdd','#eef2eb','#e9eff8','#f6e9ef','#1d2925'].map(color=><button key={color} style={{background:color}} aria-label={'Фон статьи '+color} aria-pressed={article.background===color} onClick={()=>patch({background:color})}/>)}<input type="color" aria-label="Свой цвет фона статьи" value={article.background||THEMES[article.theme].bg} onChange={e=>patch({background:e.target.value})}/></div><button className="text-action" onClick={()=>patch({background:''})}>Вернуть фон темы</button></div>
           <div className="setting-group"><span className="field-label">Шрифт</span><div className="font-options"><button className={article.font === "serif" ? "selected" : ""} onClick={() => patch({ font: "serif" })}><span className="serif">Aa</span><span>Книжный</span></button><button className={article.font === "sans" ? "selected" : ""} onClick={() => patch({ font: "sans" })}><span>Aa</span><span>Современный</span></button></div></div>
           <div className="setting-group"><span className="field-label">Цвет акцентов</span><div className="color-options">{ACCENTS.map((color) => <button key={color} style={{ background: color }} className={article.accent === color ? "selected" : ""} aria-label={"Выбрать цвет " + color} aria-pressed={article.accent === color} onClick={() => patch({ accent: color })}>{article.accent === color && <Check size={13} />}</button>)}<label className="custom-color" title="Свой цвет"><Plus size={14} /><input type="color" aria-label="Свой цвет акцентов" value={article.accent} onChange={(e) => patch({ accent: e.target.value })} /></label></div></div>
           <div className="setting-group inline-setting"><span className="field-label">Заголовок</span><div className="segmented"><button className={article.alignment === "left" ? "selected" : ""} aria-label="Заголовок слева" onClick={() => patch({ alignment: "left" })}><AlignLeft size={17} /></button><button className={article.alignment === "center" ? "selected" : ""} aria-label="Заголовок по центру" onClick={() => patch({ alignment: "center" })}><AlignCenter size={17} /></button></div></div>
@@ -413,7 +430,7 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
         </>}
         {tab === "link" && <>
           <p className="panel-intro">Пусть ваша история начинается ещё до перехода по ссылке.</p>
-          <label className="field-label">Адрес страницы<span className="domain-prefix">{SITE_HOST}/</span><div className="slug-input"><Link2 size={15} /><input aria-label="Свой адрес страницы" value={article.slug} placeholder={suggestSlug(article.title)} maxLength={120} onChange={(e) => patch({ slug: e.target.value })} onBlur={() => { try { patch({ slug: normalizeSlug(article.slug || suggestSlug(article.title)) }); } catch {} }} /></div></label>
+          <label className="field-label">Адрес страницы<span className="domain-prefix">{SITE_HOST}/</span><div className="slug-input"><Link2 size={15} /><input aria-label="Свой адрес страницы" value={article.slug.startsWith("draft-")?suggestSlug(article.title):article.slug} placeholder={suggestSlug(article.title)} maxLength={120} onChange={(e) => patch({ slug: e.target.value })} onBlur={() => { try { patch({ slug: normalizeSlug(article.slug || suggestSlug(article.title)) }); } catch {} }} /></div></label>
           <div className={"slug-status " + slugState.kind} aria-live="polite">{slugState.kind === "checking" ? <Loader2 className="spin" size={13} /> : slugState.kind === "ok" ? <CheckCircle2 size={13} /> : <span />}{slugState.text}</div>
           <p className="field-hint address-hint">Например: moya-istoriya или vi/заметки. При смене адреса старые ссылки продолжат работать.</p>
           <div className="panel-divider" />
@@ -437,11 +454,11 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
       {modal === "new" && <><p className="modal-intro">Чистый лист или готовая структура. Текст и оформление всегда можно изменить.</p><div className="template-picker">{([{ kind: "blank", name: "С чистого листа", hint: "Только вы и ваша идея", icon: FileText }, { kind: "article", name: "Статья-разбор", hint: "Суть, аргументы, выводы и источники", icon: BookOpen }, { kind: "guide", name: "Пошаговая инструкция", hint: "Подготовка, действия и проверка результата", icon: ListChecks }, { kind: "story", name: "Личная история", hint: "Начало, поворот и то, что изменилось", icon: Quote }] as { kind: TemplateKind; name: string; hint: string; icon: typeof Type }[]).map(({ kind, name, hint, icon: Icon }) => <button key={kind} onClick={() => { setModal(null); switchTo(articleTemplate(kind, user?.fullName || "")); }}><Icon size={22} /><span><strong>{name}</strong><small>{hint}</small></span><ArrowUpRight size={17} /></button>)}</div></>}
       {modal === "blocks" && <><p className="modal-intro">Блок появится после того, в котором вы сейчас пишете. Его можно переместить за значок слева.</p><div className="block-picker">{blockTypes.map(({ type, name, hint, icon: Icon }) => <button key={type} onClick={() => addBlock(type)}><span className={"block-picker-icon type-" + type}><Icon size={21} /></span><span><strong>{name}</strong><small>{hint}</small></span><Plus size={15} /></button>)}</div></>}
       {modal === "outline" && <><p className="modal-intro">Заголовки превращаются в оглавление. Нажмите на раздел, чтобы перейти к нему в редакторе.</p>{outline.length ? <nav className="editor-outline modal-outline">{outline.map((item, i) => <button key={item.id} onClick={() => focusBlock(item.blockId)}><span>{i + 1}</span>{item.title}<ArrowUpRight size={15} /></button>)}</nav> : <div className="empty-outline"><List size={28} /><p>В статье пока нет разделов.</p><button className="btn btn-primary" onClick={() => addBlock("heading")}>Добавить первый заголовок</button></div>}<button className="btn btn-light full" onClick={() => setModal("blocks")}><Plus size={16} />Добавить другой блок</button></>}
-      {modal === "publish" && <><p className="modal-intro">Текст, оформление и карточка ссылки будут сохранены вместе.</p><div className="publish-summary"><span className="publish-thumbnail" style={{ background: THEMES[article.theme].bg, color: THEMES[article.theme].text }}>Aa</span><div><strong>{article.title || "Без названия"}</strong><span>{wordCount} слов · {readingTime(article)} мин чтения</span></div></div><label className="field-label">Ссылка на вашу страницу<span className="domain-prefix">{SITE_HOST}/</span><input className="field" value={article.slug} placeholder={suggestSlug(article.title)} onChange={(e) => patch({ slug: e.target.value })} /></label><div className="private-note"><Globe2 size={17} /><p><strong>Статья будет доступна всем по ссылке</strong>Для чтения не нужен доступ. Черновики не публикуются. После изменения адреса старые ссылки продолжат работать.</p></div>{!user && <a href={signIn} target="_top" className="btn btn-primary full">Открыть доступ к статьям <ArrowUpRight size={15} /></a>}{user && <div className="modal-actions"><button className="btn btn-light" disabled={busy} onClick={() => setModal(null)}>Ещё поправлю</button><button className="btn btn-primary" disabled={busy || uploading} onClick={async () => { const saved = await save(true); if (saved) { setSuccessArticle(saved); setModal("success"); } }}>{busy ? <Loader2 className="spin" size={16} /> : <ArrowUpRight size={16} />}{article.published ? "Сохранить изменения" : "Опубликовать"}</button></div>}</>}
+      {modal === "publish" && <><p className="modal-intro">Текст, оформление и карточка ссылки будут сохранены вместе.</p><div className="publish-summary"><span className="publish-thumbnail" style={{ background: THEMES[article.theme].bg, color: THEMES[article.theme].text }}>Aa</span><div><strong>{article.title || "Без названия"}</strong><span>{wordCount} слов · {readingTime(article)} мин чтения</span></div></div><label className="field-label">Ссылка на вашу страницу<span className="domain-prefix">{SITE_HOST}/</span><input className="field" value={article.slug.startsWith("draft-")?suggestSlug(article.title):article.slug} placeholder={suggestSlug(article.title)} onChange={(e) => patch({ slug: e.target.value })} /></label><div className="private-note"><Globe2 size={17} /><p><strong>Статья будет доступна всем по ссылке</strong>Для чтения не нужен доступ. Черновики не публикуются. После изменения адреса старые ссылки продолжат работать.</p></div>{!user && <a href={signIn} target="_top" className="btn btn-primary full">Открыть доступ к статьям <ArrowUpRight size={15} /></a>}{user && <div className="modal-actions"><button className="btn btn-light" disabled={busy} onClick={() => setModal(null)}>Ещё поправлю</button><button className="btn btn-primary" disabled={busy || uploading} onClick={async () => { const saved = await save(true); if (saved) { setSuccessArticle(saved); setModal("success"); } }}>{busy ? <Loader2 className="spin" size={16} /> : <ArrowUpRight size={16} />}{article.published ? "Сохранить изменения" : "Опубликовать"}</button></div>}</>}
       {modal === "success" && successArticle && <><div className="success-symbol"><Check size={30} /></div><p className="modal-intro">«{successArticle.title}» сохранена и доступна по своей ссылке.</p><div className="published-url"><span>{articleUrl(successArticle.slug)}</span><button className="icon-button" aria-label="Скопировать ссылку" onClick={() => void copyLink(successArticle)}><Copy size={17} /></button></div><div className="modal-actions"><button className="btn btn-light" onClick={() => setModal(null)}>К редактору</button><a href={articleUrl(successArticle.slug)} target="_blank" rel="noopener noreferrer" className="btn btn-primary">Открыть страницу <ArrowUpRight size={16} /></a></div></>}
       {modal === "delete" && <><p className="modal-intro">Статья «{article.title}» и её адреса будут удалены. Отменить это действие не получится.</p><div className="modal-actions"><button className="btn btn-light" onClick={() => setModal(null)} disabled={busy}>Оставить</button><button className="btn btn-danger" onClick={() => void deleteArticle()} disabled={busy}>{busy ? <Loader2 className="spin" size={15} /> : <Trash2 size={15} />}Удалить</button></div></>}
       {modal === "discard" && <><p className="modal-intro">Сохраните текущий лист перед переходом, чтобы не потерять текст и настройки.</p><div className="modal-actions stacked"><button className="btn btn-primary" disabled={busy} onClick={async () => { const saved = await save(); if (saved && !dirtyRef.current) { setModal(null); pendingSwitch.current?.(); } else if (saved) { notify("Пока шло сохранение, вы добавили изменения. Сохраните их перед переходом."); } }}>{busy && <Loader2 className="spin" size={15} />}Сохранить и перейти</button><button className="btn btn-light" onClick={() => { setModal(null); pendingSwitch.current?.(); }}>Перейти без сохранения</button><button className="text-action" onClick={() => setModal(null)}>Остаться на этом листе</button></div></>}
-      {modal === "help" && <div className="help-body"><p>Лист — простой способ превратить текст в самостоятельную страницу.</p><h3>Пишите с телефона</h3><p>Добавляйте текст, цитаты, фотографии, списки и кнопки. Внизу — вкладки оформления и настройки ссылки.</p><h3>Сделайте ссылку своей</h3><p>Выберите путь, например /vi/istoriya. Отдельно задайте заголовок, описание и обложку карточки в мессенджерах. Изменение пути не ломает старые ссылки.</p><h3>Больше, чем обычный текст</h3><p>Добавляйте «Суть за минуту», интерактивные чек-листы и раскрывающиеся пояснения. Заголовки сами образуют оглавление. У читателя есть заметки, ссылки на разделы и возврат к месту чтения.</p><h3>Сохраняйте и возвращайтесь</h3><p>На устройстве черновик сохраняется автоматически. Для другого устройства скачайте запасной ключ или привяжите доступ к Telegram-боту.</p><h3>Свой домен</h3><p>Сейчас страницы используют адрес сервиса. Для другого домена понадобится домен, которым вы владеете, и его подключение.</p><div className="private-note"><Globe2 size={17} /><p>Читать опубликованные статьи можно без входа. Для публикации не нужны регистрация и пароль. <a href="/_list/about">Подробнее о сервисе и данных</a>.</p></div><button className="btn btn-primary full" onClick={() => setModal(null)}>Начать свою историю <ArrowRight size={16} /></button></div>}
+      {modal === "help" && <div className="help-body"><p>Лист — простой способ превратить текст в самостоятельную страницу.</p><h3>Пишите с телефона</h3><p>Добавляйте текст, цитаты, фотографии, списки и кнопки. Внизу — вкладки оформления и настройки ссылки.</p><h3>Сделайте ссылку своей</h3><p>Выберите путь, например /vi/istoriya. Отдельно задайте заголовок, описание и обложку карточки в мессенджерах. Изменение пути не ломает старые ссылки.</p><h3>Больше, чем обычный текст</h3><p>Добавляйте «Суть за минуту», интерактивные чек-листы и раскрывающиеся пояснения. Заголовки сами образуют оглавление. У читателя есть заметки, ссылки на разделы и возврат к месту чтения.</p><h3>Сохраняйте и возвращайтесь</h3><p>Черновик сохраняется автоматически после паузы в наборе. Статьи из Telegram доступны через бота на разных устройствах. Статьи обычного браузера остаются в этом же браузере, пока сохранены данные сайта.</p><h3>Свой домен</h3><p>Сейчас страницы используют адрес сервиса. Для другого домена понадобится домен, которым вы владеете, и его подключение.</p><div className="private-note"><Globe2 size={17} /><p>Читать опубликованные статьи можно без входа. Для публикации не нужны регистрация и пароль. <a href="/_list/about">Подробнее о сервисе и данных</a>.</p></div><button className="btn btn-primary full" onClick={() => setModal(null)}>Начать свою историю <ArrowRight size={16} /></button></div>}
     </Modal>}
   </div>;
 }

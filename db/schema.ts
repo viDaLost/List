@@ -8,6 +8,7 @@ export const articles = sqliteTable("articles", {
   alignment: text("alignment").notNull().default("left"), wide: integer("wide").notNull().default(0),
   shareTitle: text("share_title").notNull().default(""), shareDescription: text("share_description").notNull().default(""),
   shareImage: text("share_image").notNull().default(""), published: integer("published").notNull().default(0),
+  appearance:text('appearance').notNull().default('{}'),
   views: integer("views").notNull().default(0), version: integer("version").notNull().default(1),
   createdAt: integer("created_at").notNull(), updatedAt: integer("updated_at").notNull(),
   moderationBlocked: integer("moderation_blocked").notNull().default(0),

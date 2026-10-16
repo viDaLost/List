@@ -4,8 +4,9 @@ import { ArrowLeft, ArrowRight, ArrowUpRight, Bookmark, Check, Download, Flag, L
 import { type Article, articleOutline, articleUrl, suggestSlug } from "@/lib/article";
 import { type ReaderNote, notesMarkdown, parseNotes, parseProgress } from "@/lib/reading";
 import { ArticleView, articleStyle } from "./article-view";
+import {clientFetch} from '@/lib/client-access';
 
-export default function ReaderExperience({ article, canReport = false, reportSignIn = "/" }: { article: Article; canReport?: boolean; reportSignIn?: string }) {
+export default function ReaderExperience({ article, canReport = false, reportSignIn = "/",canEdit=false,editHref='/',homeHref='/' }: { article: Article; canReport?: boolean; reportSignIn?: string;canEdit?:boolean;editHref?:string;homeHref?:string }) {
   const [drawer, setDrawer] = useState<"notes" | "contents" | "settings" | "report" | null>(null);
   const [reportReason, setReportReason] = useState("spam"), [reportDetails, setReportDetails] = useState(""), [reportBusy, setReportBusy] = useState(false), [reportSent, setReportSent] = useState(false);
   const [summaryOnly, setSummaryOnly] = useState(false), [focusMode, setFocusMode] = useState(false);
@@ -139,7 +140,7 @@ export default function ReaderExperience({ article, canReport = false, reportSig
     if (reportBusy || !article.id) return;
     setReportBusy(true);
     try {
-      const response = await fetch("/api/reports", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ articleId: article.id, reason: reportReason, details: reportDetails, website: "" }) });
+      const response = await clientFetch("/api/reports", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ articleId: article.id, reason: reportReason, details: reportDetails, website: "" }) });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "Не удалось отправить жалобу.");
       setReportSent(true); setMessage("Жалоба передана владельцу сервиса.");
@@ -148,7 +149,7 @@ export default function ReaderExperience({ article, canReport = false, reportSig
   }
   return <main className={"reader-page enhanced-reader " + (focusMode ? "focus-mode " : "") + (summaryOnly ? "summary-mode" : "")} style={{ ...articleStyle(article), "--reading-scale": scale } as React.CSSProperties}>
     <div className="reading-progress" role="progressbar" aria-label="Прочитано" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}><span style={{ width: progress + "%" }} /></div>
-    <nav className="reader-nav"><a href="/" className="wordmark"><span className="brand-icon">л</span>лист<span className="wordmark-dot">.</span></a><span className="reader-article-name">{article.title}</span><div className="reader-nav-right"><button className="btn btn-light" onClick={share}><Share2 size={16} /><span>Поделиться</span></button></div></nav>
+    <nav className="reader-nav"><a href={homeHref} className="wordmark"><span className="brand-icon">л</span>лист<span className="wordmark-dot">.</span></a><span className="reader-article-name">{article.title}</span><div className="reader-nav-right">{canEdit&&<a className="btn btn-primary reader-owner-edit" href={editHref}>Редактировать</a>}<button className="btn btn-light" onClick={share}><Share2 size={16} /><span>Поделиться</span></button></div></nav>
     <div className="reading-toolbar" aria-label="Инструменты читателя">
       <div className="reading-toolbar-main">{outline.length > 0 && <button onClick={() => setDrawer("contents")}><List size={17} /><span>Оглавление</span></button>}{hasSummary && <button className={summaryOnly ? "active" : ""} aria-pressed={summaryOnly} onClick={() => { setSummaryOnly(!summaryOnly); setResume(null); window.scrollTo({ top: 0, behavior: "smooth" }); }}><Zap size={16} /><span>{summaryOnly ? "Полный текст" : "Суть за минуту"}</span></button>}<button onMouseDown={(e) => e.preventDefault()} onClick={openNotes}><MessageSquare size={16} /><span>Мои заметки{notes.length > 0 ? " · " + notes.length : ""}</span></button></div>
       <div className="reading-toolbar-extra"><button onClick={() => setDrawer("settings")} aria-label="Настроить чтение"><Settings2 size={17} /></button><button aria-pressed={focusMode} title={focusMode ? "Вернуть навигацию" : "Читать без отвлечений"} aria-label={focusMode ? "Вернуть навигацию" : "Читать без отвлечений"} onClick={() => setFocusMode(!focusMode)}>{focusMode ? <Minimize2 size={17} /> : <Maximize2 size={17} />}</button><span className="reading-percent">{progress}%</span></div>

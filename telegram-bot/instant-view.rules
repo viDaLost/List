@@ -1,0 +1,16 @@
+# Draft for list.vitaledanilov.workers.dev; verify in Telegram's IV editor.
+~version: "2.1"
+?exists: //article[has-class("article-view")]
+title: //article//header//h1
+subtitle: //article//p[has-class("article-subtitle")]
+author: //article//div[has-class("article-byline")]/span[2]
+cover: //figure[has-class("article-cover")]/img
+body: //article/div[has-class("article-inner")]
+@remove: $body/header
+@remove: $body//details[has-class("article-toc")]
+@remove: $body//input
+@remove: $body//button
+@remove: $body//a[has-class("section-link")]
+@remove: $body//p[has-class("checklist-privacy")]
+@replace_tag(<div>): $body/footer
+@replace_tag(<p>): $body//nav[has-class("article-footer-buttons")]

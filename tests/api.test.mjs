@@ -13,11 +13,11 @@ import { createElement } from "react";
 const root = process.cwd(), out = path.join(root, ".sites-runtime/test-build");
 await mkdir(out, { recursive: true });
 const files = [
-  "lib/article.ts", "lib/reading.ts", "lib/object-storage.ts",  "lib/standalone-auth.ts", "lib/browser-access.ts", "lib/telegram-deploy.ts", "lib/telegram-sources.ts", "lib/server.ts", "lib/operations.ts", "app/components/article-view.tsx", "app/components/interactive-blocks.tsx", "app/components/reader-experience.tsx", "app/components/editor.tsx",
+  "lib/article.ts", "lib/reading.ts", "lib/object-storage.ts",  "lib/standalone-auth.ts", "lib/browser-access.ts", "lib/client-access.ts", "lib/telegram-identity.ts", "lib/telegram-sources-legacy.ts", "lib/telegram-deploy.ts", "lib/telegram-sources.ts", "lib/server.ts", "lib/operations.ts", "app/components/article-view.tsx", "app/components/article-ending-editor.tsx", "app/components/interactive-blocks.tsx", "app/components/reader-experience.tsx", "app/components/editor.tsx",
   "app/api/articles/route.ts", "app/api/articles/[id]/route.ts", "app/api/slug/route.ts",
   "app/api/uploads/route.ts", "app/media/[id]/route.ts", "app/api/views/[id]/route.ts",
   "app/api/admin/route.ts", "app/api/admin/backups/[id]/route.ts", "app/api/reports/route.ts",
-  "app/api/access/route.ts", "app/api/admin/telegram/route.ts", "app/api/telegram/connect/route.ts", "app/api/telegram/bridge/route.ts",
+  "app/api/access/route.ts", "app/api/admin/telegram/route.ts", "app/api/telegram/connect/route.ts", "app/api/telegram/session/route.ts", "app/api/telegram/bridge/route.ts",
 ];
 await writeFile(path.join(out, "platform.mjs"), "export const env = globalThis.__listEnv;\n");
 await writeFile(path.join(out, "auth.mjs"), `export async function getAuthorUser() { return globalThis.__listUser; } export function authorAccessPath(path) { return "/signin-with-chatgpt?return_to="+encodeURIComponent(path); }\n`);
@@ -423,45 +423,69 @@ test("passwordless browser keys create isolated authors and cannot forge adminis
  const prepared=await standaloneRequest(request);assert.equal(prepared.headers.get("oai-authenticated-user-id"),first.user.userId);assert.equal(prepared.headers.get("oai-authenticated-user-admin"),"0");
  const forged=await standaloneRequest(new Request(model.SITE_ORIGIN+"/api/admin",{headers:{"oai-authenticated-user-id":"owner","oai-authenticated-user-admin":"1"}}));assert.equal(forged.headers.get("oai-authenticated-user-id"),null);
  const key=cookie.split("=")[1];assert.equal((await access.lookupAccessKey(key)).id,first.user.userId);assert.equal(await access.lookupAccessKey("bad"),null);
- const exportRequest=new Request(model.SITE_ORIGIN+"/api/access",{method:"POST",headers:{cookie,"Content-Type":"application/json",origin:model.SITE_ORIGIN},body:JSON.stringify({action:"export"})});assert.equal((await (await api.POST(exportRequest)).json()).key,key);
+ const exportRequest=new Request(model.SITE_ORIGIN+"/api/access",{method:"POST",headers:{cookie,"Content-Type":"application/json",origin:model.SITE_ORIGIN},body:JSON.stringify({action:"export"})});assert.equal((await api.POST(exportRequest)).status,400);
  const ticket=await access.issueAccessLink(first.user.userId),restored=await access.redeemAccessLink(ticket);assert.equal(restored.author.id,first.user.userId);assert.notEqual(restored.key,key);await assert.rejects(()=>access.redeemAccessLink(ticket));
  const expired=await access.issueAccessLink(first.user.userId,"restore",-1);await assert.rejects(()=>access.redeemAccessLink(expired));
  const wrongKind=await access.issueAccessLink(first.user.userId,"connect");await assert.rejects(()=>access.redeemAccessLink(wrongKind));
 });
 
-test("Telegram bridge requires server credentials and consumes binding links once",async()=>{
- const api=await load("app/api/telegram/bridge/route"),access=await load("lib/browser-access");
- const secret="telegram-test-secret-".repeat(3);globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET=secret;
- const call=(body,credential=secret)=>api.POST(new Request(model.SITE_ORIGIN+"/api/telegram/bridge",{method:"POST",headers:{"Content-Type":"application/json","X-List-Bridge":credential},body:JSON.stringify(body)}));
+test("Telegram identity is automatic, independent of browsers and inaccessible to other IDs",async()=>{
+ const api=await load('app/api/telegram/bridge/route'),access=await load('lib/browser-access'),identity=await load('lib/telegram-identity'),{standaloneRequest}=await load('lib/standalone-auth');
+ const secret='private-tg-bridge-'.repeat(3);globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET=secret;
+ const call=(body,credential=secret)=>api.POST(new Request(model.SITE_ORIGIN+'/api/telegram/bridge',{method:'POST',headers:{'Content-Type':'application/json','X-List-Bridge':credential},body:JSON.stringify(body)}));
+ const browser=await access.createAuthor();
  try{
-  assert.equal((await call({action:"configure",username:"test_list_bot"},"wrong")).status,403);
-  assert.equal((await call({action:"configure",username:"test_list_bot"})).status,200);
-  const a=await access.createAuthor(),token=await access.issueAccessLink(a.author.id,"connect");
-  assert.equal((await call({action:"bind",telegramId:12345,token},"wrong")).status,403);
-  const bound=await call({action:"bind",telegramId:12345,token});assert.equal(bound.status,200);assert.equal((await bound.json()).authorId,a.author.id);
-  assert.equal((await call({action:"bind",telegramId:99999,token})).status,400);
-  assert.equal((await call({action:"restore",telegramId:99999})).status,404);
-  const restored=await call({action:"restore",telegramId:12345});assert.equal(restored.status,200);const url=new URL((await restored.json()).url);assert.equal(url.origin,model.SITE_ORIGIN);assert.ok(url.hash.startsWith("#ticket="));
-  const b=await access.createAuthor(),conflict=await access.issueAccessLink(b.author.id,"connect");assert.equal((await call({action:"bind",telegramId:12345,token:conflict})).status,409);
-  assert.equal((await call({action:"configure",username:"bad/name"})).status,400);
- }finally{delete globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET;}
+  assert.equal((await call({action:'start',telegramId:24680},'wrong')).status,403);
+  const first=await (await call({action:'start',telegramId:24680})).json(),again=await (await call({action:'start',telegramId:24680})).json();assert.equal(first.authorId,again.authorId);assert.notEqual(first.authorId,browser.author.id);
+  assert.equal((await call({action:'bind',telegramId:24680,token:'anything'})).status,400);
+  const tg=await identity.telegramAuthor('24680'),tgKey=await identity.telegramSession(tg);
+  const cookies='__Host-list-author='+browser.key+'; __Host-list-telegram-author='+tgKey;
+  const ordinary=await standaloneRequest(new Request(model.SITE_ORIGIN,{headers:{cookie:cookies}}));assert.equal(ordinary.headers.get('oai-authenticated-user-id'),browser.author.id);
+  const embedded=await standaloneRequest(new Request(model.SITE_ORIGIN,{headers:{cookie:cookies,'x-list-context':'telegram'}}));assert.equal(embedded.headers.get('oai-authenticated-user-id'),tg.id);
+  const forged=await standaloneRequest(new Request(model.SITE_ORIGIN,{headers:{cookie:'__Host-list-author='+browser.key,'x-list-context':'telegram','oai-authenticated-user-id':tg.id}}));assert.equal(forged.headers.get('oai-authenticated-user-id'),null);
+  const switched=await standaloneRequest(new Request(model.SITE_ORIGIN,{headers:{cookie:'__Host-list-author='+tgKey}}));assert.equal(switched.headers.get('oai-authenticated-user-id'),null);
+  globalThis.__listUser={userId:browser.author.id};const browserPage=await (await collection.POST(req('POST',{...model.demoArticle(),slug:'browser-stays-separate'}))).json();
+  globalThis.__listUser={userId:tg.id};const tgPage=await (await collection.POST(req('POST',{...model.demoArticle(),slug:'tg-private-draft'}))).json();
+  const list=await (await call({action:'articles',telegramId:24680})).json();assert.ok(list.articles.some(a=>a.id===tgPage.article.id));assert.ok(!list.articles.some(a=>a.id===browserPage.article.id));assert.ok(!JSON.stringify(list).includes('24680'));
+  assert.equal((await call({action:'delete',telegramId:24681,articleId:tgPage.article.id,version:1})).status,404);
+  assert.equal((await call({action:'delete',telegramId:24680,articleId:tgPage.article.id,version:2})).status,409);
+  assert.equal((await call({action:'delete',telegramId:24680,articleId:tgPage.article.id,version:1})).status,200);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM articles WHERE id=?').get(tgPage.article.id).n,0);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM backups WHERE article_id=? AND owner_id=?').get(tgPage.article.id,tg.id).n,1);
+ }finally{delete globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET;globalThis.__listUser=owner;}
 });
 
-test("Telegram Serverless handler trusts platform identity and replies only in private chats",async()=>{
- const dir=path.join(out,"telegram-native"),sdk=path.join(dir,"sdk.js");await mkdir(path.join(dir,"lib"),{recursive:true});await mkdir(path.join(dir,"handlers"),{recursive:true});
- await writeFile(sdk,'export const api=globalThis.__tgSdk.api,db=globalThis.__tgSdk.db,fetch=globalThis.__tgSdk.fetch;');
- for(const name of ["lib/bridge.js","handlers/message.js"]){const source=(await readFile(path.join(root,"telegram-bot/tgcloud",name),"utf8")).replace("from 'sdk'","from "+JSON.stringify(pathToFileURL(sdk).href));await writeFile(path.join(dir,name),source);}
- const access=await load("lib/browser-access"),bridgeApi=await load("app/api/telegram/bridge/route"),a=await access.createAuthor(),secret="native-serverless-test-".repeat(3),sent=[],saved=[];
- globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET=secret;
- globalThis.__tgSdk={api:{async sendMessage(message){sent.push(message);}},db:{async get(){return {value:secret};},async run(_sql,params){saved.push(params);}},async fetch(url,init){return bridgeApi.POST(new Request(url,init));}};
+test('Mini App validates Telegram signatures, age, bot and identity rather than trusting client IDs',async()=>{
+ const {verifyTelegramData}=await load('lib/telegram-identity');
+ const key=await crypto.subtle.generateKey('Ed25519',true,['sign','verify']),pub=Buffer.from(await crypto.subtle.exportKey('raw',key.publicKey)).toString('hex'),now=Date.now(),bot='123456789';
+ async function sign(fields){const params=new URLSearchParams(fields),pairs=[...params].sort(([a],[b])=>a<b?-1:a>b?1:0).map(([k,v])=>k+'='+v);params.set('signature',Buffer.from(await crypto.subtle.sign('Ed25519',key.privateKey,new TextEncoder().encode(bot+':WebAppData\n'+pairs.join('\n')))).toString('base64url'));return params.toString();}
+ const valid=await sign({auth_date:String(Math.floor(now/1000)),user:JSON.stringify({id:234567,first_name:'Test'})});assert.equal(await verifyTelegramData(valid,bot,now,pub),'234567');
+ await assert.rejects(()=>verifyTelegramData(valid,'other-bot',now,pub));await assert.rejects(()=>verifyTelegramData(valid,bot,now+2*86400000,pub));
+ const altered=new URLSearchParams(valid);altered.set('user',JSON.stringify({id:234568}));await assert.rejects(()=>verifyTelegramData(altered.toString(),bot,now,pub));
+ await assert.rejects(()=>verifyTelegramData(valid+'&user=%7B%22id%22%3A1%7D',bot,now,pub));
+ await assert.rejects(()=>verifyTelegramData(valid,bot,now));
+ const session=await load('app/api/telegram/session/route');sqlite.prepare("INSERT INTO settings (key,value) VALUES ('telegram_bot_id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(bot);
+ const result=await session.POST(req('POST',{initData:valid}));assert.equal(result.status,401);assert.equal(result.headers.get('set-cookie'),null);
+});
+
+test('native Telegram menus, edit links and confirmed deletion use the platform user ID',async()=>{
+ const dir=path.join(out,'telegram-menu');await mkdir(path.join(dir,'lib'),{recursive:true});await mkdir(path.join(dir,'handlers'),{recursive:true});
+ const sdk=path.join(dir,'sdk.js');await writeFile(sdk,'export const api=globalThis.__tgMenu.api,db=globalThis.__tgMenu.db,fetch=globalThis.__tgMenu.fetch;');
+ for(const name of ['lib/bridge.js','lib/menu.js','handlers/message.js','handlers/callback_query.js']){let source=await readFile(path.join(root,'telegram-bot/tgcloud',name),'utf8');source=source.replace("from 'sdk'",'from '+JSON.stringify(pathToFileURL(sdk).href));await writeFile(path.join(dir,name),source);}
+ const bridgeApi=await load('app/api/telegram/bridge/route'),secret='tg-native-menu-'.repeat(4),sent=[],answered=[];globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET=secret;
+ globalThis.__tgMenu={api:{async sendMessage(v){sent.push(v);},async answerCallbackQuery(v){answered.push(v);}},db:{async get(){return {value:secret};},async run(){}},async fetch(url,init){return bridgeApi.POST(new Request(url,init));}};
  try{
-  const {default:handler}=await import(pathToFileURL(path.join(dir,"handlers/message.js")).href);
-  await handler({chat:{type:"group",id:-123},from:{id:98765},text:"/start"});assert.equal(sent.length,0);
-  await handler({chat:{type:"private",id:98765},from:{id:98765,is_bot:true},text:"/start"});assert.equal(sent.length,0);
-  const token=await access.issueAccessLink(a.author.id,"connect");await handler({chat:{type:"private",id:98765},from:{id:98765},text:"/start bind_"+token});
-  assert.equal(saved[0][":tg"],98765);assert.equal(saved[0][":author"],a.author.id);assert.equal(sent[0].chat_id,98765);assert.ok(sent[0].reply_markup.inline_keyboard[0][0].url.includes("/access#ticket="));assert.ok(!JSON.stringify(sent).includes(secret));
-  await handler({chat:{type:"private",id:98765},from:{id:98765},text:"/articles"});assert.match(sent[1].text,/пока нет/);
- }finally{delete globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET;delete globalThis.__tgSdk;}
+  const {default:message}=await import(pathToFileURL(path.join(dir,'handlers/message.js')).href),{default:callback}=await import(pathToFileURL(path.join(dir,'handlers/callback_query.js')).href);
+  await message({chat:{type:'group',id:-1},from:{id:334455},text:'/start'});assert.equal(sent.length,0);
+  await message({chat:{type:'private',id:334455},from:{id:334455},text:'/start'});
+  assert.deepEqual(sent[0].reply_markup.inline_keyboard.map(row=>row[0].text),['Мои статьи','Новая статья','Удалить статью']);assert.ok(sent[0].reply_markup.inline_keyboard[1][0].web_app.url.includes('screen=new'));assert.ok(!JSON.stringify(sent.map(m=>m.text)).includes('334455'));
+  const a=sqlite.prepare('SELECT id FROM authors WHERE telegram_id=?').get('334455');globalThis.__listUser={userId:a.id};const created=await (await collection.POST(req('POST',{...model.demoArticle(),slug:'native-menu-article',published:true}))).json();
+  await message({chat:{type:'private',id:334455},from:{id:334455},text:'/articles'});assert.ok(JSON.stringify(sent.at(-1)).includes('screen=edit'));assert.ok(JSON.stringify(sent.at(-1)).includes('screen=read'));
+  const q=(data,id=334455)=>({id:'query',from:{id},message:{chat:{type:'private',id}},data});
+  await callback(q('remove:'+created.article.id,334456));assert.ok(!JSON.stringify(sent.at(-1)).includes('confirm:'));
+  await callback(q('remove:'+created.article.id));const confirm=sent.at(-1).reply_markup.inline_keyboard[0][0].callback_data;assert.ok(confirm.startsWith('confirm:'));assert.ok(sqlite.prepare('SELECT id FROM articles WHERE id=?').get(created.article.id));
+  await callback(q(confirm));assert.equal(sqlite.prepare('SELECT id FROM articles WHERE id=?').get(created.article.id),undefined);assert.ok(answered.length>=3);
+ }finally{delete globalThis.__tgMenu;delete globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET;globalThis.__listUser=owner;}
 });
 
 test("phone setup deploys Telegram Serverless without persisting the CLI token",async()=>{
@@ -552,4 +576,25 @@ test("phone setup refuses existing bots, unsafe migrations and invalid credentia
 test("Telegram setup API is restricted to the service owner",async()=>{
  const setup=await load('app/api/admin/telegram/route'),previous=globalThis.__listUser;
  try{globalThis.__listUser=null;assert.equal((await setup.POST(req('POST',{token:'not-real'}))).status,401);globalThis.__listUser=other;assert.equal((await setup.POST(req('POST',{token:'not-real'}))).status,403);globalThis.__listUser=owner;assert.equal((await setup.POST(req('POST',{token:'not-real'},'https://evil.test'))).status,403);}finally{globalThis.__listUser=previous;}
+});
+
+test('block colors, page background and up to five footer buttons survive publish, backup and restore',async()=>{
+ globalThis.__listUser=owner;
+ const styled={...model.demoArticle(),slug:'colored-footer-test',background:'#ddeeff',footer:{text:'Моя подпись',mark:'',buttons:Array.from({length:5},(_,i)=>({label:'Кнопка '+(i+1),url:'https://example.com/'+i}))},blocks:[{id:'colored',type:'paragraph',text:'Цветной блок',background:'#ffdddd',color:'#112233'}],published:true};
+ const made=await collection.POST(req('POST',styled));assert.equal(made.status,201);const created=(await made.json()).article;
+ assert.equal(created.background,styled.background);assert.deepEqual(created.footer,styled.footer);assert.equal(created.blocks[0].color,'#112233');
+ const read=await item.GET(req('GET'),context(created.id));assert.deepEqual((await read.json()).article.footer,styled.footer);
+ globalThis.__listUser=other;assert.equal((await item.GET(req('GET'),context(created.id))).status,404);globalThis.__listUser=owner;
+ const publicPage=await server.publishedArticle(styled.slug);const html=renderToStaticMarkup(createElement(ArticleView,{article:publicPage}));assert.ok(html.includes('--paper:#ddeeff'));assert.ok(html.includes('background:#ffdddd'));assert.ok(html.includes('color:#112233'));assert.ok(!html.includes('Спасибо, что прочитали'));assert.equal((html.match(/>Кнопка /g)||[]).length,5);
+ for(const bad of [{...styled,background:'red;display:none'},{...styled,blocks:[{...styled.blocks[0],color:'url(javascript:alert(1))'}]},{...styled,footer:{...styled.footer,buttons:Array(6).fill(styled.footer.buttons[0])}},{...styled,footer:{...styled.footer,buttons:[{label:'X',url:'javascript:alert(1)'}]}}])assert.throws(()=>model.normalizeArticle(bad));
+ const empty=model.normalizeArticle({...styled,footer:{text:'',mark:'',buttons:[]}});assert.ok(!renderToStaticMarkup(createElement(ArticleView,{article:empty})).includes('article-end'));
+ assert.equal((await item.DELETE(req('DELETE'),context(created.id))).status,200);
+ const backup=sqlite.prepare('SELECT id FROM backups WHERE article_id=? ORDER BY created_at DESC LIMIT 1').get(created.id);assert.equal((await backupApi.POST(req('POST',{action:'restore'}),context(backup.id))).status,200);
+ const restored=(await item.GET(req('GET'),context(created.id)));const data=(await restored.json()).article;assert.deepEqual(data.footer,styled.footer);assert.equal(data.background,styled.background);assert.equal(data.published,false);
+});
+
+test('reader edit control belongs to the owner and publication action sits after editor content',()=>{
+ const article=model.demoArticle(),ownerHtml=renderToStaticMarkup(createElement(ReaderExperience,{article,canEdit:true,editHref:'/?article=owned'})),publicHtml=renderToStaticMarkup(createElement(ReaderExperience,{article,canEdit:false}));
+ assert.ok(ownerHtml.includes('Редактировать'));assert.ok(!publicHtml.includes('Редактировать'));
+ const editor=renderToStaticMarkup(createElement(Editor,{user:owner,initial:article,signIn:'/access',signOut:'/access'}));assert.ok(!editor.includes('publish-top'));assert.ok(editor.indexOf('article-publish-bottom')>editor.indexOf('editable-blocks'));assert.ok(editor.includes('Окончание статьи'));assert.ok(editor.includes('Фон этого блока'));
 });

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
-import { publishedArticle } from "@/lib/server";
+import { publishedArticle,sql } from "@/lib/server";
 import { normalizeSlug, articleText, articleUrl, SITE_ORIGIN } from "@/lib/article";
 import ReaderExperience from "@/app/components/reader-experience";
 import { getAuthorUser, authorAccessPath } from "@/app/author-access";
@@ -28,5 +28,6 @@ export default async function PublishedPage({ params }: Props) {
   const { slug } = await params;
   if (slug.join("/") !== article.slug) redirect("/" + article.slug.split("/").map(encodeURIComponent).join("/"));
   const user = await getAuthorUser();
-  return <ReaderExperience article={article} canReport={!!user} reportSignIn={authorAccessPath("/" + article.slug)} />;
+  const canEdit=!!user&&!!await sql().prepare('SELECT id FROM articles WHERE id=? AND owner_id=?').bind(article.id,user!.userId).first();
+  return <ReaderExperience article={article} canReport={!!user} canEdit={canEdit} editHref={'/?article='+article.id} reportSignIn={authorAccessPath("/" + article.slug)} />;
 }

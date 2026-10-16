@@ -25,7 +25,7 @@ export default { async fetch(request,env,ctx) {
   headers.set('Referrer-Policy','strict-origin-when-cross-origin');
   headers.set('X-Content-Type-Options','nosniff');
   headers.set('X-Frame-Options','SAMEORIGIN');
-  if (response.headers.has('Set-Cookie') || pathname === '/' || pathname.startsWith('/api/') || pathname.startsWith('/_list/')) headers.set('Cache-Control','private, no-store');
+  if (request.headers.has('Cookie') || response.headers.has('Set-Cookie') || pathname === '/' || pathname.startsWith('/api/') || pathname.startsWith('/_list/')) headers.set('Cache-Control','private, no-store');
   return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
 } };` });
 const output = process.argv[2];

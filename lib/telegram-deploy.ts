@@ -1,4 +1,5 @@
 import {telegramSources} from './telegram-sources';
+import {legacyTelegramSources} from './telegram-sources-legacy';
 export class TelegramSetupError extends Error {
  constructor(message:string,public status?:number,public phase?:string){super(message);}
 }
@@ -29,7 +30,8 @@ export async function deployTelegramBot(rawToken:string,bridgeSecret:string,tran
  const remote=await call<State>('/get');
  if(!Number.isSafeInteger(remote.revision))throw new TelegramSetupError('Не удалось проверить версию проекта Telegram.');
  const modules=remote.canonical_modules||{};
- if(remote.static||Object.entries(modules).some(([name,source])=>!telegramSources[name]||source.trim().replaceAll('\r\n','\n')!==telegramSources[name].trim().replaceAll('\r\n','\n')))throw new TelegramSetupError('В этом боте уже есть другой проект. Его код не изменён. Создайте отдельного бота для Листа.');
+ const known=[telegramSources,legacyTelegramSources].some(sources=>Object.entries(modules).every(([name,source])=>sources[name]&&source.trim().replaceAll('\r\n','\n')===sources[name].trim().replaceAll('\r\n','\n')));
+ if(remote.static||!known)throw new TelegramSetupError('В этом боте уже есть другой проект. Его код не изменён. Создайте отдельного бота для Листа.');
  function safeChanges(result:Migration){
   if(!Array.isArray(result?.db_changes))throw new TelegramSetupError('Telegram не подтвердил состояние таблиц. Настройка остановлена до запуска бота.');
   if(result.db_changes.some(c=>c.status!=='good'||!['create_table','create_column','create_index'].includes(c.kind)||typeof c.table!=='string'))throw new TelegramSetupError('База бота содержит несовместимые данные. Опасные изменения не применены. Используйте отдельного бота.');
