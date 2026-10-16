@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { objectStorage } from "@/lib/object-storage";
 import { admin, audit, backupArticle, rateLimit } from "@/lib/operations";
 import { endpoint, sql, readBody, HttpError, fromRow, articleValues, type ArticleRow } from "@/lib/server";
 import { normalizeArticle, suggestSlug } from "@/lib/article";
@@ -6,8 +6,8 @@ type Context = { params: Promise<{ id: string }> };
 type BackupRow = { id: string; article_id: string; object_key: string; title: string };
 async function findBackup(id: string) {
   const record = await sql().prepare("SELECT * FROM backups WHERE id=?").bind(id).first<BackupRow>();
-  if (!record || !env.BUCKET) throw new HttpError(404, "Резервная версия не найдена.");
-  const object = await env.BUCKET.get(record.object_key);
+  if (!record) throw new HttpError(404, "Резервная версия не найдена.");
+  const object = await objectStorage().get(record.object_key);
   if (!object) throw new HttpError(404, "Файл резервной версии недоступен.");
   return { record, object };
 }

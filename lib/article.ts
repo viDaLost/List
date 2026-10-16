@@ -1,4 +1,4 @@
-export const SITE_ORIGIN = "https://lista-studio.vitaledanilov.chatgpt.site";
+export const SITE_ORIGIN = process.env.NEXT_PUBLIC_SITE_ORIGIN || "https://list.vitaledanilov.workers.dev";
 export const SITE_HOST = new URL(SITE_ORIGIN).hostname;
 export const THEMES = {
   paper: { name: "Бумага", bg: "#fdfcf9", text: "#252c27", muted: "#7b7d72" },

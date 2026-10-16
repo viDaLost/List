@@ -3,7 +3,7 @@ import { notFound, redirect } from "next/navigation";
 import { publishedArticle } from "@/lib/server";
 import { normalizeSlug, articleText, articleUrl, SITE_ORIGIN } from "@/lib/article";
 import ReaderExperience from "@/app/components/reader-experience";
-import { getChatGPTUser, chatGPTSignInPath } from "@/app/chatgpt-auth";
+import { getAuthorUser, authorAccessPath } from "@/app/author-access";
 export const dynamic = "force-dynamic";
 type Props = { params: Promise<{ slug: string[] }> };
 async function getArticle(params: Props["params"]) {
@@ -27,6 +27,6 @@ export default async function PublishedPage({ params }: Props) {
   if (!article) notFound();
   const { slug } = await params;
   if (slug.join("/") !== article.slug) redirect("/" + article.slug.split("/").map(encodeURIComponent).join("/"));
-  const user = await getChatGPTUser();
-  return <ReaderExperience article={article} canReport={!!user} reportSignIn={chatGPTSignInPath("/" + article.slug)} />;
+  const user = await getAuthorUser();
+  return <ReaderExperience article={article} canReport={!!user} reportSignIn={authorAccessPath("/" + article.slug)} />;
 }

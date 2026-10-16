@@ -1,4 +1,4 @@
-import { env } from "cloudflare:workers";
+import { objectStorage } from "@/lib/object-storage";
 import { author, endpoint, sql, HttpError, checkOrigin } from "@/lib/server";
 import { rateLimit } from "@/lib/operations";
 export async function POST(request: Request) {
@@ -7,7 +7,7 @@ export async function POST(request: Request) {
     const user = await author();
     await rateLimit("upload:minute:" + user.userId, 10, 60000);
     await rateLimit("upload:day:" + user.userId, 100, 86400000);
-    if (!env.BUCKET) throw new HttpError(503, "Загрузка изображений временно недоступна.");
+    const storage = objectStorage();
     if (Number(request.headers.get("content-length") || 0) > 9 * 1024 * 1024) throw new HttpError(413, "Максимальный размер изображения — 8 МБ.");
     const file = (await request.formData()).get("file");
     if (!(file instanceof File)) throw new HttpError(400, "Выберите изображение.");
@@ -22,9 +22,9 @@ export async function POST(request: Request) {
     const usage = await sql().prepare("SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS bytes FROM uploads WHERE owner_id=?").bind(user.userId).first<{ n: number; bytes: number }>();
     if ((usage?.n ?? 0) >= 300 || (usage?.bytes ?? 0) + bytes.length > 200 * 1024 * 1024) throw new HttpError(429, "Достигнут лимит изображений первой версии.");
     const id = crypto.randomUUID();
-    await env.BUCKET.put(id, bytes, { httpMetadata: { contentType: mime } });
+    await storage.put(id, bytes, { httpMetadata: { contentType: mime } });
     try { await sql().prepare("INSERT INTO uploads (id, owner_id, mime, bytes, created_at) VALUES (?, ?, ?, ?, ?)").bind(id, user.userId, mime, bytes.length, Date.now()).run(); }
-    catch (e) { await env.BUCKET.delete(id); throw e; }
+    catch (e) { await storage.delete(id); throw e; }
     return Response.json({ url: "/media/" + id }, { status: 201 });
   });
 }

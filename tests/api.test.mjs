@@ -13,19 +13,20 @@ import { createElement } from "react";
 const root = process.cwd(), out = path.join(root, ".sites-runtime/test-build");
 await mkdir(out, { recursive: true });
 const files = [
-  "lib/article.ts", "lib/reading.ts", "lib/server.ts", "lib/operations.ts", "app/components/article-view.tsx", "app/components/interactive-blocks.tsx", "app/components/reader-experience.tsx", "app/components/editor.tsx",
+  "lib/article.ts", "lib/reading.ts", "lib/object-storage.ts",  "lib/standalone-auth.ts", "lib/browser-access.ts", "lib/server.ts", "lib/operations.ts", "app/components/article-view.tsx", "app/components/interactive-blocks.tsx", "app/components/reader-experience.tsx", "app/components/editor.tsx",
   "app/api/articles/route.ts", "app/api/articles/[id]/route.ts", "app/api/slug/route.ts",
   "app/api/uploads/route.ts", "app/media/[id]/route.ts", "app/api/views/[id]/route.ts",
   "app/api/admin/route.ts", "app/api/admin/backups/[id]/route.ts", "app/api/reports/route.ts",
+  "app/api/access/route.ts", "app/api/telegram/connect/route.ts", "app/api/telegram/bridge/route.ts",
 ];
 await writeFile(path.join(out, "platform.mjs"), "export const env = globalThis.__listEnv;\n");
-await writeFile(path.join(out, "auth.mjs"), "export async function getChatGPTUser() { return globalThis.__listUser; }\n");
+await writeFile(path.join(out, "auth.mjs"), `export async function getAuthorUser() { return globalThis.__listUser; } export function authorAccessPath(path) { return "/signin-with-chatgpt?return_to="+encodeURIComponent(path); }\n`);
 for (const file of files) {
   let source = await readFile(path.join(root, file), "utf8");
   source = source.replace(/from (["'])([^"']+)\1/g, (all, quote, name) => {
     let target;
     if (name === "cloudflare:workers") target = path.join(out, "platform.mjs");
-    else if (name === "@/app/chatgpt-auth") target = path.join(out, "auth.mjs");
+    else if (name === "@/app/author-access") target = path.join(out, "auth.mjs");
     else if (name.startsWith("@/")) target = path.join(out, name.slice(2) + ".mjs");
     else if (name.startsWith(".")) target = path.resolve(out, path.dirname(file), name + ".mjs");
     return target ? "from " + quote + pathToFileURL(target).href + quote : all;
@@ -74,7 +75,7 @@ const reading = await load("lib/reading");
 const { default: ReaderExperience } = await load("app/components/reader-experience");
 const operations = await load("lib/operations"), adminApi = await load("app/api/admin/route"), reportApi = await load("app/api/reports/route"), backupApi = await load("app/api/admin/backups/[id]/route");
 const { default: Editor } = await load("app/components/editor");
-const owner = { userId: "owner", email: "owner@example.test" }, other = { userId: "other", email: "other@example.test" };
+const owner = { userId: "owner", email: "owner@example.test", isAdmin: true }, other = { userId: "other", email: "other@example.test" };
 const req = (method, body, origin = model.SITE_ORIGIN) => new Request(model.SITE_ORIGIN + "/api/articles", { method, headers: { "content-type": "application/json", origin }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
 const context = (id) => ({ params: Promise.resolve({ id }) });
 let article;
@@ -377,10 +378,83 @@ test("a failed backup cannot erase or overwrite the current article", async () =
     assert.equal(sqlite.prepare("SELECT version FROM articles WHERE id=?").get(current.id).version, current.version);
   } finally { globalThis.__listEnv.BUCKET.put = oldPut; }
 });
-test("public editor explains sign-in and never advertises a closed site", () => {
+test("public editor explains browser access without registration", () => {
   const html = renderToStaticMarkup(createElement(Editor, { user: null, initial: model.demoArticle(), signIn: "/signin-with-chatgpt?return_to=%2F", signOut: "/", adminAllowed: false }));
   assert.ok(html.includes("Публичный сервис"));
-  assert.ok(html.includes("вход через ChatGPT"));
+  assert.ok(html.includes("Ключ редактирования"));
+  assert.ok(!html.includes("ChatGPT"));
   assert.ok(!html.includes("Закрытая версия"));
   assert.ok(!html.includes("Управление сервисом"));
+});
+
+test("D1 object storage preserves chunked images and private snapshots without R2", async () => {
+  const originalBucket=globalThis.__listEnv.BUCKET;
+  delete globalThis.__listEnv.BUCKET;
+  try {
+    const {objectStorage}=await load("lib/object-storage"), storage=objectStorage();
+    const id=crypto.randomUUID(), data=crypto.getRandomValues(new Uint8Array(64000));
+    const image=new Uint8Array(2200000); for(let i=0;i<image.length;i++) image[i]=data[i%data.length];
+    await storage.put(id,image,{httpMetadata:{contentType:"image/png"}});
+    const result=await media.GET(new Request(model.SITE_ORIGIN+"/media/"+id),context(id));
+    assert.equal(result.status,200); assert.equal(result.headers.get("content-type"),"image/png");
+    assert.deepEqual(new Uint8Array(await result.arrayBuffer()),image);
+    assert.ok(sqlite.prepare("SELECT COUNT(*) n FROM object_chunks WHERE object_key=?").get(id).n>1);
+    const key="backups/"+crypto.randomUUID()+"/snapshot.json";
+    await storage.put(key,JSON.stringify({private:true}),{httpMetadata:{contentType:"application/json"}});
+    assert.deepEqual(await (await storage.get(key)).json(),{private:true});
+    assert.equal((await media.GET(new Request(model.SITE_ORIGIN+"/media/"+key),context(key))).status,404);
+    await storage.delete(id); assert.equal(await storage.get(id),null);
+    await storage.delete(key);
+  } finally { globalThis.__listEnv.BUCKET=originalBucket; }
+});
+
+test("passwordless browser keys create isolated authors and cannot forge administrator headers",async()=>{
+ const api=await load("app/api/access/route"),access=await load("lib/browser-access"),{standaloneRequest}=await load("lib/standalone-auth");
+ const createRequest=()=>new Request(model.SITE_ORIGIN+"/api/access",{method:"POST",headers:{"Content-Type":"application/json",origin:model.SITE_ORIGIN,"cf-connecting-ip":"192.0.2.10"},body:JSON.stringify({action:"create"})});
+ const a=await api.POST(createRequest()),b=await api.POST(createRequest());assert.equal(a.status,200);assert.equal(b.status,200);
+ const first=await a.json(),second=await b.json();assert.notEqual(first.user.userId,second.user.userId);assert.equal(first.user.isAdmin,false);
+ const cookie=a.headers.get("set-cookie").split(";")[0];assert.match(a.headers.get("set-cookie"),/Secure; HttpOnly; SameSite=Lax/);
+ const request=new Request(model.SITE_ORIGIN+"/api/admin",{headers:{cookie,"oai-authenticated-user-id":"owner","oai-authenticated-user-admin":"1"}});
+ const prepared=await standaloneRequest(request);assert.equal(prepared.headers.get("oai-authenticated-user-id"),first.user.userId);assert.equal(prepared.headers.get("oai-authenticated-user-admin"),"0");
+ const forged=await standaloneRequest(new Request(model.SITE_ORIGIN+"/api/admin",{headers:{"oai-authenticated-user-id":"owner","oai-authenticated-user-admin":"1"}}));assert.equal(forged.headers.get("oai-authenticated-user-id"),null);
+ const key=cookie.split("=")[1];assert.equal((await access.lookupAccessKey(key)).id,first.user.userId);assert.equal(await access.lookupAccessKey("bad"),null);
+ const exportRequest=new Request(model.SITE_ORIGIN+"/api/access",{method:"POST",headers:{cookie,"Content-Type":"application/json",origin:model.SITE_ORIGIN},body:JSON.stringify({action:"export"})});assert.equal((await (await api.POST(exportRequest)).json()).key,key);
+ const ticket=await access.issueAccessLink(first.user.userId),restored=await access.redeemAccessLink(ticket);assert.equal(restored.author.id,first.user.userId);assert.notEqual(restored.key,key);await assert.rejects(()=>access.redeemAccessLink(ticket));
+ const expired=await access.issueAccessLink(first.user.userId,"restore",-1);await assert.rejects(()=>access.redeemAccessLink(expired));
+ const wrongKind=await access.issueAccessLink(first.user.userId,"connect");await assert.rejects(()=>access.redeemAccessLink(wrongKind));
+});
+
+test("Telegram bridge requires server credentials and consumes binding links once",async()=>{
+ const api=await load("app/api/telegram/bridge/route"),access=await load("lib/browser-access");
+ const secret="telegram-test-secret-".repeat(3);globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET=secret;
+ const call=(body,credential=secret)=>api.POST(new Request(model.SITE_ORIGIN+"/api/telegram/bridge",{method:"POST",headers:{"Content-Type":"application/json","X-List-Bridge":credential},body:JSON.stringify(body)}));
+ try{
+  assert.equal((await call({action:"configure",username:"test_list_bot"},"wrong")).status,403);
+  assert.equal((await call({action:"configure",username:"test_list_bot"})).status,200);
+  const a=await access.createAuthor(),token=await access.issueAccessLink(a.author.id,"connect");
+  assert.equal((await call({action:"bind",telegramId:12345,token},"wrong")).status,403);
+  const bound=await call({action:"bind",telegramId:12345,token});assert.equal(bound.status,200);assert.equal((await bound.json()).authorId,a.author.id);
+  assert.equal((await call({action:"bind",telegramId:99999,token})).status,400);
+  assert.equal((await call({action:"restore",telegramId:99999})).status,404);
+  const restored=await call({action:"restore",telegramId:12345});assert.equal(restored.status,200);const url=new URL((await restored.json()).url);assert.equal(url.origin,model.SITE_ORIGIN);assert.ok(url.hash.startsWith("#ticket="));
+  const b=await access.createAuthor(),conflict=await access.issueAccessLink(b.author.id,"connect");assert.equal((await call({action:"bind",telegramId:12345,token:conflict})).status,409);
+  assert.equal((await call({action:"configure",username:"bad/name"})).status,400);
+ }finally{delete globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET;}
+});
+
+test("Telegram Serverless handler trusts platform identity and replies only in private chats",async()=>{
+ const dir=path.join(out,"telegram-native"),sdk=path.join(dir,"sdk.js");await mkdir(path.join(dir,"lib"),{recursive:true});await mkdir(path.join(dir,"handlers"),{recursive:true});
+ await writeFile(sdk,'export const api=globalThis.__tgSdk.api,db=globalThis.__tgSdk.db,fetch=globalThis.__tgSdk.fetch;');
+ for(const name of ["lib/bridge.js","handlers/message.js"]){const source=(await readFile(path.join(root,"telegram-bot/tgcloud",name),"utf8")).replace("from 'sdk'","from "+JSON.stringify(pathToFileURL(sdk).href));await writeFile(path.join(dir,name),source);}
+ const access=await load("lib/browser-access"),bridgeApi=await load("app/api/telegram/bridge/route"),a=await access.createAuthor(),secret="native-serverless-test-".repeat(3),sent=[],saved=[];
+ globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET=secret;
+ globalThis.__tgSdk={api:{async sendMessage(message){sent.push(message);}},db:{async get(){return {value:secret};},async run(_sql,params){saved.push(params);}},async fetch(url,init){return bridgeApi.POST(new Request(url,init));}};
+ try{
+  const {default:handler}=await import(pathToFileURL(path.join(dir,"handlers/message.js")).href);
+  await handler({chat:{type:"group",id:-123},from:{id:98765},text:"/start"});assert.equal(sent.length,0);
+  await handler({chat:{type:"private",id:98765},from:{id:98765,is_bot:true},text:"/start"});assert.equal(sent.length,0);
+  const token=await access.issueAccessLink(a.author.id,"connect");await handler({chat:{type:"private",id:98765},from:{id:98765},text:"/start bind_"+token});
+  assert.equal(saved[0][":tg"],98765);assert.equal(saved[0][":author"],a.author.id);assert.equal(sent[0].chat_id,98765);assert.ok(sent[0].reply_markup.inline_keyboard[0][0].url.includes("/access#ticket="));assert.ok(!JSON.stringify(sent).includes(secret));
+  await handler({chat:{type:"private",id:98765},from:{id:98765},text:"/articles"});assert.match(sent[1].text,/пока нет/);
+ }finally{delete globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET;delete globalThis.__tgSdk;}
 });

@@ -1,11 +1,11 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { getAuthorUser } from "@/app/author-access";
 import { type Article, InputError } from "./article";
 export class HttpError extends Error { constructor(public status: number, message: string, public retryAfter?: number) { super(message); } }
 export function sql() { if (!env.DB) throw new HttpError(503, "Хранилище временно недоступно."); return env.DB; }
 export async function author() {
-  const user = await getChatGPTUser();
-  if (!user) throw new HttpError(401, "Войдите, чтобы сохранить статью и открывать её на других устройствах.");
+  const user = await getAuthorUser();
+  if (!user) throw new HttpError(401, "Доступ автора ещё не создан. Обновите страницу и попробуйте снова.");
   return user;
 }
 export function checkOrigin(request: Request) {

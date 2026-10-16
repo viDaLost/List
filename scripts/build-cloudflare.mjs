@@ -1,0 +1,13 @@
+import { spawnSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
+const build = spawnSync(process.execPath, ["scripts/run-framework.mjs", "build"], { stdio: "inherit", env: { ...process.env, LIST_TARGET: "cloudflare" } });
+if (build.status !== 0) process.exit(build.status || 1);
+const path = "dist/server/wrangler.json", config = JSON.parse(readFileSync(path, "utf8"));
+config.name = "list";
+config.account_id = "55bc11023772cb8c8f022ddf699592c9";
+config.workers_dev = true;
+config.vars = {};
+config.d1_databases[0].migrations_dir = "../../drizzle";
+config.observability = { enabled: true, redact_query_string: true };
+writeFileSync(path, JSON.stringify(config, null, 2) + "\n");
+console.log("Cloudflare Worker ready in dist/server/wrangler.json. Runtime secrets are configured separately.");

@@ -1,0 +1,3 @@
+import {db,fetch} from 'sdk';
+export const SITE='https://list.vitaledanilov.workers.dev';
+export async function bridge(input){const config=await db.get('SELECT value FROM settings WHERE key=:key',{':key':'bridge_secret'});if(!config)throw new Error('Бот ещё не настроен владельцем.');const response=await fetch(SITE+'/api/telegram/bridge',{method:'POST',headers:{'Content-Type':'application/json','X-List-Bridge':config.value},body:JSON.stringify(input)});const data=await response.json();if(!response.ok)throw new Error(data.error||'Сайт временно недоступен.');return data;}

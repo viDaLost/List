@@ -13,20 +13,21 @@ const { d1, r2 } = hostingConfig;
 // macOS Seatbelt blocks FSEvents, so Codex previews need polling for HMR.
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === "seatbelt";
 const managedLinux = readExecutionProfile() === "managed-linux";
+const standalone = process.env.LIST_TARGET === "cloudflare";
 
 const localBindingConfig = {
-  main: "./build/sites-worker.ts",
+  main: standalone ? "./build/cloudflare-worker.ts" : "./build/sites-worker.ts",
   compatibility_flags: ["nodejs_compat"],
   d1_databases: d1
     ? [
         {
           binding: d1,
-          database_name: "site-creator-d1",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
+          database_name: standalone ? "list-articles" : "site-creator-d1",
+          database_id: standalone ? "bcfcbee7-2569-4acd-b086-608c1b5970dc" : SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
         },
       ]
     : [],
-  r2_buckets: r2
+  r2_buckets: r2 && !standalone
     ? [
         {
           binding: r2,
@@ -52,6 +53,7 @@ export default defineConfig(async ({ command }) => {
   const { cloudflare } = await import("@cloudflare/vite-plugin");
 
   return {
+    define: { "process.env.NEXT_PUBLIC_SITE_ORIGIN": JSON.stringify(standalone ? "https://list.vitaledanilov.workers.dev" : "https://lista-studio.vitaledanilov.chatgpt.site") },
     server: {
       ...(managedLinux
         ? { host: "0.0.0.0", allowedHosts: ["terminal.local"] }

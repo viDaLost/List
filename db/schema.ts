@@ -41,3 +41,11 @@ export const auditLog = sqliteTable("audit_log", {
   id: text("id").primaryKey(), actorId: text("actor_id").notNull(), articleId: text("article_id"),
   action: text("action").notNull(), details: text("details").notNull().default(""), createdAt: integer("created_at").notNull(),
 });
+export const objectChunks = sqliteTable("object_chunks", {
+  objectKey: text("object_key").notNull(), part: integer("part").notNull(),
+  data: text("data").notNull(), mime: text("mime").notNull(),
+}, (table) => [index("object_chunks_key_idx").on(table.objectKey, table.part)]);
+export const authors = sqliteTable("authors", { id:text("id").primaryKey(),telegramId:text("telegram_id").unique(),isAdmin:integer("is_admin").notNull().default(0),createdAt:integer("created_at").notNull() });
+export const accessKeys = sqliteTable("access_keys", { keyHash:text("key_hash").primaryKey(),authorId:text("author_id").notNull().references(()=>authors.id,{onDelete:"cascade"}),createdAt:integer("created_at").notNull() });
+export const accessLinks = sqliteTable("access_links", { keyHash:text("key_hash").primaryKey(),authorId:text("author_id").notNull().references(()=>authors.id,{onDelete:"cascade"}),kind:text("kind").notNull(),expiresAt:integer("expires_at").notNull() });
+export const settings = sqliteTable("settings", {key:text("key").primaryKey(),value:text("value").notNull()});
