@@ -1,0 +1,113 @@
+.public-welcome{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 27px;background:#eef3e6;border-bottom:1px solid #dfe7d3;color:#536c42}
+.public-welcome strong{font-family:Georgia,serif;font-weight:400;font-size:20px;line-height:1.35}
+.public-welcome p{font:11px/1.7 Arial,sans-serif;margin:6px 0 0;color:#839475}
+.public-welcome>a{display:flex;align-items:center;gap:5px;font:11px/1.6 Arial,sans-serif;flex-shrink:0;color:#71885e}
+.moderation-notice{display:flex;align-items:flex-start;gap:10px;background:#faf0e7;color:#a17854;font:12px/1.8 Arial,sans-serif;padding:15px 25px}
+.moderation-notice>svg{flex-shrink:0;margin-top:2px}
+.moderation-notice p{margin:0}
+.moderation-notice strong{display:block;font-weight:500;color:#926545}
+.reader-footer-links{display:flex;align-items:center;justify-content:center;gap:20px;flex-wrap:wrap;margin-top:14px;font:10px/1.7 Arial,sans-serif}
+.reader-footer-links>button{display:flex;align-items:center;gap:5px;background:none;border:0;padding:6px;color:inherit;font-size:10px}
+.reader-footer-links a{text-decoration:none}
+.report-select{background:#fffef8;color:#5d734c;border:1px solid #dfe6d4;border-radius:5px;font:16px/1.5 Arial,sans-serif;padding:12px;min-height:45px;width:100%}
+.report-thanks{text-align:center;padding:35px 5px;color:#8a9e74}
+.report-thanks>svg{margin:auto auto 20px}
+.report-thanks h3{font:23px/1.4 Georgia,serif;color:#61794d}
+.report-thanks p{font:13px/1.8 Arial,sans-serif;margin-top:15px}
+.admin-page{min-height:100dvh;background:#f7f8f2;color:#344a2c;padding-bottom:70px}
+.admin-top{display:flex;align-items:center;gap:25px;padding:20px 35px;border-bottom:1px solid #e4e9db;background:#fcfdf7}
+.admin-top>span{display:flex;align-items:center;gap:8px;font-size:12px;color:#8b9c7b}
+.admin-top>a:last-child{margin-left:auto}
+.admin-content{max-width:1100px;padding:45px 35px;margin:auto}
+.admin-title{display:flex;align-items:center;justify-content:space-between;gap:25px;margin-bottom:28px}
+.admin-title h1{font:38px/1.2 Georgia,serif;letter-spacing:-1px;margin:12px 0 13px}
+.admin-title p{font:12px/1.8 Arial,sans-serif;color:#91a17f;margin:0}
+.admin-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px;margin:30px 0}
+.admin-stats>div{display:flex;align-items:flex-start;flex-direction:column;gap:12px;background:#fdfef8;border:1px solid #e0e8d4;border-radius:9px;padding:20px}
+.admin-stats>div>span{font:11px/1.6 Arial,sans-serif;color:#9aaa88}
+.admin-stats strong{font:38px/1 Georgia,serif;font-weight:400}
+.admin-tabs{display:flex;align-items:center;gap:7px;background:#eaf0e0;padding:5px;border-radius:7px;margin:30px 0 22px;width:fit-content;max-width:100%}
+.admin-tabs button{display:flex;align-items:center;justify-content:center;gap:8px;font:12px/1.5 Arial,sans-serif;background:transparent;border:0;border-radius:5px;padding:12px 18px;color:#8b9e77;min-height:43px}
+.admin-tabs button.selected{background:#fbfdf6;color:#5d7c45;box-shadow:0 1px 4px #56713a15}
+.admin-cards{display:flex;flex-direction:column;gap:17px}
+.admin-card{border:1px solid #e2e8d7;background:#fdfef8;border-radius:9px;padding:23px}
+.admin-card-heading{display:flex;align-items:center;justify-content:space-between;gap:15px}
+.admin-card-heading time,.backup-date{font:10px/1.6 Arial,sans-serif;color:#9daf8c}
+.admin-card h2{font:25px/1.4 Georgia,serif;letter-spacing:-.4px;font-weight:400;margin:15px 0 10px;overflow-wrap:anywhere}
+.admin-card h3{font:12px/1.6 Arial,sans-serif;color:#7d9367;margin:14px 0}
+.admin-card p{font:12px/1.8 Arial,sans-serif;color:#9aaa87;margin:10px 0}
+.report-state{display:inline-flex;border:1px solid #e3e5d8;background:#f3f4ed;color:#a2a98d;padding:5px 8px;border-radius:4px;font:9px/1.4 Arial,sans-serif}
+.report-state.state-open{border-color:#e9dcc7;background:#faf1e0;color:#b59a6c}
+.report-state.state-resolved{border-color:#d5e4c8;background:#eff6e6;color:#8fa975}
+.report-state.state-dismissed{border-color:#e1e6d7;background:#f1f4ea;color:#9eac8c}
+.admin-card p.report-details{white-space:pre-wrap;color:#778d61;border-left:2px solid #d2dfc2;background:#f3f7ed;padding:13px 17px;margin:18px 0;overflow-wrap:anywhere}
+.admin-card-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:18px}
+.admin-card-actions .text-action{margin-left:5px}
+.admin-message{display:flex;align-items:center;justify-content:space-between;background:#ebf3df;border:1px solid #d8e7c7;padding:13px 15px;border-radius:6px;font:12px/1.7 Arial,sans-serif;color:#7d9a65;margin:20px 0}
+.admin-search{display:flex;align-items:center;gap:10px;background:#fffef8;border:1px solid #dfe7d3;border-radius:6px;padding:0 14px;color:#9dad8c;max-width:450px}
+.admin-search input{border:0;outline:none;background:transparent;width:100%;min-height:43px;font:14px Arial,sans-serif;color:#7e9666}
+.admin-section-note{font:12px/1.9 Arial,sans-serif;color:#97a686;max-width:850px;margin:18px 0 25px}
+.admin-empty{font:15px/1.8 Georgia,serif;color:#9dad8b;padding:40px 20px;text-align:center;border:1px dashed #dce5ce;border-radius:8px;margin:5px 0}
+.admin-loading{font:12px Arial,sans-serif;display:flex;align-items:center;gap:10px;color:#9bb086;padding:25px 0}
+.backup-card{display:flex;align-items:center;justify-content:space-between;gap:25px}
+.backup-card h2{font-size:22px;margin-top:9px}
+.backup-card .admin-card-actions{flex-shrink:0;margin:0}
+.admin-page .modal .field{font-size:16px;min-height:110px;resize:vertical}
+.about-page{max-width:800px;margin:auto;padding:45px 35px 75px;color:#3b5131}
+.about-page>.wordmark{margin-bottom:35px}
+.about-page h1{font:48px/1.2 Georgia,serif;letter-spacing:-1px;font-weight:400;margin:20px 0}
+.about-page .about-lead{font:20px/1.8 Georgia,serif;color:#879b71}
+.about-page h2{font:26px/1.5 Georgia,serif;font-weight:400;letter-spacing:-.4px;margin:34px 0 13px}
+.about-page p{font:15px/1.9 Arial,sans-serif;color:#8b9b7b}
+.about-actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:40px}
+@media(max-width:900px){
+ .public-welcome{padding:16px 26px;gap:12px}
+ .public-welcome strong{font-size:20px}
+ .public-welcome p{font-size:11px}
+ .public-welcome>a{font-size:11px}
+ .admin-top{padding:18px 24px;gap:15px}
+ .admin-content{padding:35px 24px}
+ .admin-title h1{font-size:32px}
+ .admin-title{align-items:flex-start}
+ .admin-page .btn{min-height:44px;font-size:12px}
+ .backup-card{align-items:flex-start;flex-direction:column;gap:10px}
+ .reader-footer-links{font-size:11px}
+ .reader-footer-links>button{font-size:11px;min-height:40px}
+}
+@media(max-width:600px){
+ .public-welcome{padding:14px 23px;display:block}
+ .public-welcome strong{font-size:19px}
+ .public-welcome p{font-size:10px;line-height:1.7;margin-top:5px}
+ .public-welcome>a{font-size:10px;margin-top:9px;display:inline-flex}
+ .keyboard-open .public-welcome{display:none}
+ .moderation-notice{padding:13px 23px;font-size:11px}
+ .admin-top{padding:15px 20px}
+ .admin-top>span{display:none}
+ .admin-content{padding:28px 20px}
+ .admin-title{display:block}
+ .admin-title>.btn{margin-top:19px}
+ .admin-title h1{font-size:34px;line-height:1.25}
+ .admin-title p{font-size:12px}
+ .admin-stats{gap:9px;margin-top:25px}
+ .admin-stats>div{padding:14px 11px;gap:12px}
+ .admin-stats>div>span{font-size:10px;min-height:32px;line-height:1.6}
+ .admin-stats strong{font-size:34px}
+ .admin-tabs{width:100%;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:3px;padding:4px}
+ .admin-tabs button{font-size:10px;flex-direction:column;gap:6px;padding:9px 5px;min-height:59px;text-align:center}
+ .admin-card{padding:20px 17px}
+ .admin-card h2{font-size:23px}
+ .admin-card-heading{align-items:flex-start;flex-wrap:wrap;gap:8px}
+ .admin-card-actions .btn{min-height:44px;font-size:11px}
+ .admin-card p,.admin-section-note{font-size:12px}
+ .admin-search input{font-size:16px;min-height:45px}
+ .admin-page .modal-backdrop{padding:0;align-items:flex-end}
+ .admin-page .modal{max-height:calc(100dvh - 18px);width:100%;border-radius:18px 18px 0 0;padding:23px 21px calc(25px + env(safe-area-inset-bottom))}
+ .admin-page .modal .field{font-size:16px}
+ .admin-page .modal-header h2{font-size:26px}
+ .about-page{padding:30px 24px 60px}
+ .about-page h1{font-size:39px}
+ .about-page .about-lead{font-size:19px}
+ .about-page h2{font-size:26px}
+ .about-page p{font-size:16px;line-height:1.9}
+}
+@media print{.public-welcome,.reader-footer-links{display:none!important}}

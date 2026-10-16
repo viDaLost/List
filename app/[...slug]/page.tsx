@@ -1,0 +1,32 @@
+import type { Metadata } from "next";
+import { notFound, redirect } from "next/navigation";
+import { publishedArticle } from "@/lib/server";
+import { normalizeSlug, articleText, articleUrl, SITE_ORIGIN } from "@/lib/article";
+import ReaderExperience from "@/app/components/reader-experience";
+import { getChatGPTUser, chatGPTSignInPath } from "@/app/chatgpt-auth";
+export const dynamic = "force-dynamic";
+type Props = { params: Promise<{ slug: string[] }> };
+async function getArticle(params: Props["params"]) {
+  const { slug } = await params;
+  let path: string;
+  try { path = normalizeSlug(slug.join("/")); } catch { return null; }
+  return publishedArticle(path);
+}
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const article = await getArticle(params);
+  if (!article) return { title: "Лист не найден" };
+  const title = article.shareTitle || article.title;
+  const description = article.shareDescription || article.subtitle || articleText(article).slice(0, 180);
+  const image = article.shareImage || article.cover;
+  const absoluteImage = image ? new URL(image, SITE_ORIGIN).href : undefined;
+  const url = articleUrl(article.slug);
+  return { title, description, alternates: { canonical: url }, openGraph: { title, description, url, type: "article", siteName: "Лист", locale: "ru_RU", ...(absoluteImage ? { images: [{ url: absoluteImage }] } : {}) }, twitter: { card: absoluteImage ? "summary_large_image" : "summary", title, description, ...(absoluteImage ? { images: [absoluteImage] } : {}) } };
+}
+export default async function PublishedPage({ params }: Props) {
+  const article = await getArticle(params);
+  if (!article) notFound();
+  const { slug } = await params;
+  if (slug.join("/") !== article.slug) redirect("/" + article.slug.split("/").map(encodeURIComponent).join("/"));
+  const user = await getChatGPTUser();
+  return <ReaderExperience article={article} canReport={!!user} reportSignIn={chatGPTSignInPath("/" + article.slug)} />;
+}
