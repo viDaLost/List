@@ -9,7 +9,10 @@ export async function deployTelegramBot(rawToken:string,bridgeSecret:string,tran
  const appId=token.split(':')[0],base='https://cloud.telegram.org/'+appId+'/manage';
  async function call<T>(path:string,method='GET',body?:object):Promise<T>{
   let response:Response;
-  try{response=await transport(base+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','User-Agent':'List-Serverless-Setup/1.0'},...(body?{body:JSON.stringify(body)}:{}),redirect:'error',signal:AbortSignal.timeout(20000)});}catch{throw new TelegramSetupError('Не удалось связаться с Telegram Serverless. Попробуйте ещё раз.');}
+  // Workers supports only manual/follow redirects. Reject 3xx ourselves so the
+  // bearer credential never follows a Location header to another destination.
+  try{response=await transport(base+path,{method,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json','User-Agent':'List-Serverless-Setup/1.0'},...(body?{body:JSON.stringify(body)}:{}),redirect:'manual',cache:'no-store',signal:AbortSignal.timeout(20000)});}catch{throw new TelegramSetupError('Не удалось связаться с Telegram Serverless. Попробуйте ещё раз.');}
+  if(response.status>=300&&response.status<400){await response.body?.cancel();throw new TelegramSetupError('Telegram вернул перенаправление. Подключение остановлено; токен не отправлен на другой адрес.');}
   if(response.status===401||response.status===403)throw new TelegramSetupError('Telegram не принял CLI-токен. Проверьте его и включите Serverless в BotFather.');
   if(response.status===409)throw new TelegramSetupError('Бот изменён в другом окне. Обновите страницу и повторите подключение.');
   const reader=response.body?.getReader();if(!reader)throw new TelegramSetupError('Telegram вернул пустой ответ.');

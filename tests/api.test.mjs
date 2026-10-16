@@ -479,7 +479,19 @@ test("phone setup deploys Telegram Serverless without persisting the CLI token",
   return Response.json({ok:true,result});
  };
  assert.deepEqual(await deployTelegramBot(token,secret,transport),{username:'list_test_bot',appId:'app123'});assert.equal(calls.length,7);
- for(const call of calls){assert.equal(call.options.headers.Authorization,'Bearer '+token);assert.ok(!call.url.includes(token));assert.ok(!JSON.stringify(call.body||{}).includes(token));assert.equal(new URL(call.url).origin,'https://cloud.telegram.org');assert.equal(call.options.redirect,'error');}
+ for(const call of calls){assert.equal(call.options.headers.Authorization,'Bearer '+token);assert.ok(!call.url.includes(token));assert.ok(!JSON.stringify(call.body||{}).includes(token));assert.equal(new URL(call.url).origin,'https://cloud.telegram.org');assert.equal(call.options.redirect,'manual');assert.equal(call.options.cache,'no-store');}
+});
+
+test('Telegram setup rejects redirects without forwarding credentials',async()=>{
+ const {deployTelegramBot}=await load('lib/telegram-deploy');
+ for(const status of [301,302,303,307,308]){
+  let calls=0;
+  await assert.rejects(()=>deployTelegramBot('app123:secret','bridge-'.repeat(8),async(url,options)=>{
+   calls++;assert.equal(options.redirect,'manual');
+   return new Response(null,{status,headers:{Location:'https://example.com/steal'}});
+  }),/перенаправление/);
+  assert.equal(calls,1);
+ }
 });
 
 test("phone setup refuses existing bots, unsafe migrations and invalid credentials before writing",async()=>{
