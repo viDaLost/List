@@ -19,7 +19,7 @@ export async function PUT(request: Request, context: Context) {
       sql().prepare("UPDATE articles SET title=?, author=?, subtitle=?, slug=?, blocks=?, cover=?, theme=?, font=?, accent=?, alignment=?, wide=?, share_title=?, share_description=?, share_image=?, published=?, appearance=?, updated_at=?, version=version+1 WHERE id=? AND owner_id=? AND version=? AND EXISTS (SELECT 1 FROM paths WHERE slug=? AND article_id=articles.id)").bind(...articleValues(article), now, id, user.userId, current.version, article.slug),
     ]);
     if (!results[1].meta.changes) throw new HttpError(409, "Статья была изменена в другом окне. Откройте её заново.");
-    return Response.json({ article: { ...fromRow(current), ...article, updatedAt: now, version: current.version + 1 } });
+    return Response.json({ article: { ...fromRow(current), ...article, updatedAt: now, version: current.version + 1 } },{headers:article.published?{'X-List-Warm-Path':article.slug.split('/').map(encodeURIComponent).join('/')}:{}});
   });
 }
 export async function DELETE(request: Request, context: Context) {

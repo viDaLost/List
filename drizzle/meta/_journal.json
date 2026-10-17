@@ -36,6 +36,13 @@
       "when": 1792182699540,
       "tag": "0004_article_appearance",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1792216131134,
+      "tag": "0005_efficient_storage",
+      "breakpoints": true
     }
   ]
 }

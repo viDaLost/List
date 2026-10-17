@@ -25,7 +25,7 @@ export default { async fetch(request,env,ctx) {
   headers.set('Referrer-Policy','strict-origin-when-cross-origin');
   headers.set('X-Content-Type-Options','nosniff');
   headers.set('X-Frame-Options','SAMEORIGIN');
-  if (request.headers.has('Cookie') || response.headers.has('Set-Cookie') || pathname === '/' || pathname.startsWith('/api/') || pathname.startsWith('/_list/')) headers.set('Cache-Control','private, no-store');
+  if ((request.headers.has('Cookie') && !new RegExp('^/media/[a-f0-9-]{36}$').test(pathname)) || response.headers.has('Set-Cookie') || pathname === '/' || pathname.startsWith('/api/') || pathname.startsWith('/_list/')) headers.set('Cache-Control','private, no-store');
   return new Response(response.body,{status:response.status,statusText:response.statusText,headers});
 } };` });
 const output = process.argv[2];

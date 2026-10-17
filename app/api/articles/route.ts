@@ -21,6 +21,6 @@ export async function POST(request: Request) {
       sql().prepare("INSERT INTO articles (id, owner_id, title, author, subtitle, slug, blocks, cover, theme, font, accent, alignment, wide, share_title, share_description, share_image, published, appearance, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind(id, user.userId, ...articleValues(article), now, now),
       sql().prepare("INSERT INTO paths (slug, article_id, created_at) VALUES (?, ?, ?)").bind(article.slug, id, now),
     ]);
-    return Response.json({ article: { ...article, id, views: 0, version: 1, createdAt: now, updatedAt: now } }, { status: 201 });
+    return Response.json({ article: { ...article, id, views: 0, version: 1, createdAt: now, updatedAt: now } }, { status: 201,headers:article.published?{'X-List-Warm-Path':article.slug.split('/').map(encodeURIComponent).join('/')}:{}});
   });
 }

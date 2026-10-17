@@ -50,3 +50,7 @@ export const authors = sqliteTable("authors", { id:text("id").primaryKey(),teleg
 export const accessKeys = sqliteTable("access_keys", { keyHash:text("key_hash").primaryKey(),authorId:text("author_id").notNull().references(()=>authors.id,{onDelete:"cascade"}),createdAt:integer("created_at").notNull() });
 export const accessLinks = sqliteTable("access_links", { keyHash:text("key_hash").primaryKey(),authorId:text("author_id").notNull().references(()=>authors.id,{onDelete:"cascade"}),kind:text("kind").notNull(),expiresAt:integer("expires_at").notNull() });
 export const settings = sqliteTable("settings", {key:text("key").primaryKey(),value:text("value").notNull()});
+export const objectTransfers=sqliteTable('object_transfers',{
+  objectKey:text('object_key').primaryKey(),sha256:text('sha256').notNull(),bytes:integer('bytes').notNull(),
+  verifiedAt:integer('verified_at').notNull(),cleanedAt:integer('cleaned_at'),
+});

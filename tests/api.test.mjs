@@ -13,6 +13,7 @@ import { createElement } from "react";
 const root = process.cwd(), out = path.join(root, ".sites-runtime/test-build");
 await mkdir(out, { recursive: true });
 const files = [
+  "lib/public-delivery.ts", "lib/storage-migration.ts", "app/api/admin/storage/route.ts",
   "lib/article.ts", "lib/reading.ts", "lib/object-storage.ts",  "lib/standalone-auth.ts", "lib/browser-access.ts", "lib/client-access.ts", "lib/telegram-identity.ts", "lib/telegram-sources-legacy.ts", "lib/telegram-deploy.ts", "lib/telegram-sources.ts", "lib/server.ts", "lib/operations.ts", "lib/block-order.ts", "app/components/sortable-blocks.tsx", "app/components/article-view.tsx", "app/components/article-ending-editor.tsx", "app/components/interactive-blocks.tsx", "app/components/reader-experience.tsx", "app/components/editor.tsx",
   "app/api/articles/route.ts", "app/api/articles/[id]/route.ts", "app/api/slug/route.ts",
   "app/api/uploads/route.ts", "app/media/[id]/route.ts", "app/api/views/[id]/route.ts",
@@ -65,9 +66,10 @@ globalThis.__listEnv = {
     },
   },
   BUCKET: {
-    async put(id, bytes, options) { objects.set(id, { bytes: typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes, ...options }); },
+    async put(id, bytes, options) { objects.set(id, { bytes: new Uint8Array(await new Response(bytes).arrayBuffer()), ...options }); },
     async delete(id) { objects.delete(id); },
-    async get(id) { const object = objects.get(id); return object ? { body: object.bytes, httpEtag: '"test"', async json() { return JSON.parse(new TextDecoder().decode(object.bytes)); }, writeHttpMetadata(headers) { headers.set("Content-Type", object.httpMetadata.contentType); } } : null; },
+    async head(id) { const object=objects.get(id);return object?{size:object.bytes.byteLength}:null; },
+    async get(id) { const object = objects.get(id); return object ? { body: new Response(object.bytes).body, size:object.bytes.byteLength,httpEtag: '"test"', async arrayBuffer(){return object.bytes.slice().buffer;}, async json() { return JSON.parse(new TextDecoder().decode(object.bytes)); }, writeHttpMetadata(headers) { headers.set("Content-Type", object.httpMetadata?.contentType||'application/octet-stream'); } } : null; },
   },
 };
 globalThis.__listUser = null;
@@ -411,6 +413,101 @@ test("D1 object storage preserves chunked images and private snapshots without R
     await storage.delete(id); assert.equal(await storage.get(id),null);
     await storage.delete(key);
   } finally { globalThis.__listEnv.BUCKET=originalBucket; }
+});
+
+test('R2 migration keeps legacy files readable, verifies every byte and only then removes duplicate chunks',async()=>{
+ const {objectStorage}=await load('lib/object-storage'),migration=await load('lib/storage-migration');
+ const bucket=globalThis.__listEnv.BUCKET,key=crypto.randomUUID(),bytes=new Uint8Array(900000);bytes.fill(117);
+ try{
+  delete globalThis.__listEnv.BUCKET;await objectStorage().put(key,bytes,{httpMetadata:{contentType:'image/png'}});
+  globalThis.__listEnv.BUCKET=bucket;
+  assert.deepEqual(new Uint8Array(await new Response((await objectStorage().get(key)).body).arrayBuffer()),bytes);
+  const copied=await migration.transferObject(key);assert.equal(copied.verified,true);assert.equal(copied.bytes,bytes.length);
+  assert.ok(sqlite.prepare('SELECT count(*) n FROM object_chunks WHERE object_key=?').get(key).n>1);
+  const good=objects.get(key);objects.set(key,{...good,bytes:new Uint8Array(bytes.length)});
+  await assert.rejects(()=>migration.transferObject(key,true),e=>e.status===409);
+  assert.ok(sqlite.prepare('SELECT count(*) n FROM object_chunks WHERE object_key=?').get(key).n>1);
+  objects.set(key,good);assert.equal((await migration.transferObject(key,true)).cleaned,true);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM object_chunks WHERE object_key=?').get(key).n,0);
+  assert.ok(sqlite.prepare('SELECT cleaned_at FROM object_transfers WHERE object_key=?').get(key).cleaned_at);
+  assert.deepEqual(new Uint8Array(await new Response((await objectStorage().get(key)).body).arrayBuffer()),bytes);
+ }finally{globalThis.__listEnv.BUCKET=bucket;await objectStorage().delete(key);}
+});
+test('migration refuses an unverified cleanup or a conflicting R2 copy, and batches can resume',async()=>{
+ const {objectStorage}=await load('lib/object-storage'),migration=await load('lib/storage-migration');
+ const bucket=globalThis.__listEnv.BUCKET,key='migration-'+crypto.randomUUID();
+ try{
+  delete globalThis.__listEnv.BUCKET;await objectStorage().put(key,'original',{httpMetadata:{contentType:'text/plain'}});globalThis.__listEnv.BUCKET=bucket;
+  await bucket.put(key,'original');await assert.rejects(()=>migration.transferObject(key,true),e=>e.status===409);
+  await bucket.put(key,'conflict');await assert.rejects(()=>migration.transferObject(key),e=>e.status===409);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM object_transfers WHERE object_key=?').get(key).n,0);
+  assert.equal(sqlite.prepare('SELECT count(*) n FROM object_chunks WHERE object_key=?').get(key).n,1);
+  await bucket.delete(key);const copied=await migration.transferBatch('',false);assert.equal(copied.cursor,key);assert.equal(copied.results[0].verified,true);
+  assert.equal((await migration.transferBatch(key,false)).done,true);
+  assert.equal((await migration.transferBatch('',true)).results[0].cleaned,true);
+  assert.equal((await migration.transferBatch('',true)).done,true);
+ }finally{globalThis.__listEnv.BUCKET=bucket;await objectStorage().delete(key);}
+});
+test('storage migration is administrator-only and rejects cross-origin writes',async()=>{
+ const api=await load('app/api/admin/storage/route');globalThis.__listUser=null;assert.equal((await api.GET()).status,401);
+ globalThis.__listUser=other;assert.equal((await api.GET()).status,403);
+ globalThis.__listUser=owner;assert.equal((await api.GET()).status,200);
+ assert.equal((await api.POST(req('POST',{action:'clean'},'https://evil.test'))).status,403);
+ assert.equal((await api.POST(req('POST',{action:'erase'}))).status,400);
+ assert.equal((await (await api.POST(req('POST',{action:'copy',cursor:''}))).json()).done,true);
+});
+function deliveryFixture(){
+ const pending=[],cached=new Map(),previous=Object.getOwnPropertyDescriptor(globalThis,'caches');
+ Object.defineProperty(globalThis,'caches',{configurable:true,value:{default:{async match(key){return cached.get(key.url)?.clone();},async put(key,response){cached.set(key.url,new Response(await response.arrayBuffer(),{status:response.status,headers:response.headers}));}}}});
+ return {ctx:{waitUntil(promise){pending.push(promise);}},cached,async flush(){while(pending.length)await Promise.all(pending.splice(0));},restore(){if(previous)Object.defineProperty(globalThis,'caches',previous);else delete globalThis.caches;}};
+}
+test('public snapshots reuse SSR while checking current publication, versions, aliases and moderation',async()=>{
+ const {publicDelivery}=await load('lib/public-delivery'),fixture=deliveryFixture();globalThis.__listUser=owner;
+ const created=await collection.POST(req('POST',{...model.demoArticle(),slug:'efficient-'+crypto.randomUUID(),published:true}));
+ let page=(await created.json()).article;assert.ok(created.headers.has('X-List-Warm-Path'));let renders=0;
+ const read=path=>publicDelivery(new Request(model.SITE_ORIGIN+'/'+(path||page.slug),{headers:{Accept:'text/html'}}),globalThis.__listEnv,fixture.ctx,async()=>{renders++;const current=await server.publishedArticle(page.slug);return new Response('<h1>'+current.title+'</h1>',{headers:{'Content-Type':'text/html'}});});
+ try{
+  const first=await read();assert.equal(first.headers.get('X-List-Cache'),'page-render');await first.text();await fixture.flush();assert.equal(renders,1);
+  const second=await read();assert.equal(second.headers.get('X-List-Cache'),'page-r2');assert.ok((await second.text()).includes(page.title));await fixture.flush();
+  const third=await read();assert.equal(third.headers.get('X-List-Cache'),'page-hit');await third.text();assert.equal(renders,1);assert.match(third.headers.get('Cache-Control'),/must-revalidate/);
+  const changed=await item.PUT(req('PUT',{...page,title:'Updated immediately'}),context(page.id));assert.ok(changed.headers.has('X-List-Warm-Path'));page=(await changed.json()).article;
+  assert.ok((await (await read()).text()).includes('Updated immediately'));await fixture.flush();assert.equal(renders,2);
+  const originalSlug=page.slug;page=(await (await item.PUT(req('PUT',{...page,slug:page.slug+'-new'}),context(page.id))).json()).article;
+  const redirect=await read(originalSlug);assert.equal(redirect.status,307);assert.equal(redirect.headers.get('Location'),'/'+page.slug);
+  await (await read()).text();await fixture.flush();
+  page=(await (await item.PUT(req('PUT',{...page,published:false}),context(page.id))).json()).article;
+  assert.equal(await read(),null);assert.equal(await read(originalSlug),null);
+  page=(await (await item.PUT(req('PUT',{...page,published:true}),context(page.id))).json()).article;await (await read()).text();await fixture.flush();
+  assert.equal((await adminApi.POST(req('POST',{action:'block',articleId:page.id,reason:'Test'}))).status,200);assert.equal(await read(),null);assert.equal(await read(originalSlug),null);
+  assert.equal((await adminApi.POST(req('POST',{action:'unblock',articleId:page.id}))).status,200);assert.equal(await read(),null);
+  await item.DELETE(req('DELETE'),context(page.id));assert.equal(await read(),null);
+ }finally{await fixture.flush();fixture.restore();for(const key of objects.keys())if(key.startsWith('rendered-pages/')&&key.includes('/'+page.id+'/'))objects.delete(key);}
+});
+test('private, RSC, query and unsafe responses never enter the shared article cache',async()=>{
+ const {publicDelivery}=await load('lib/public-delivery'),fixture=deliveryFixture();globalThis.__listUser=owner;
+ const page=(await (await collection.POST(req('POST',{...model.demoArticle(),slug:'private-cache-'+crypto.randomUUID(),published:true}))).json()).article;
+ let renders=0;const render=async()=>{renders++;return new Response('private',{headers:{'Content-Type':'text/html','Set-Cookie':'secret=value'}});};
+ try{
+  for(const headers of [{cookie:'author=private'},{authorization:'Bearer private'},{rsc:'1'},{'next-router-prefetch':'1'},{'x-list-context':'telegram'}])assert.equal(await publicDelivery(new Request(model.SITE_ORIGIN+'/'+page.slug,{headers}),globalThis.__listEnv,fixture.ctx,render),null);
+  assert.equal(await publicDelivery(new Request(model.SITE_ORIGIN+'/'+page.slug+'?article=private'),globalThis.__listEnv,fixture.ctx,render),null);assert.equal(renders,0);
+  const response=await publicDelivery(new Request(model.SITE_ORIGIN+'/'+page.slug),globalThis.__listEnv,fixture.ctx,render);assert.equal(await response.text(),'private');await fixture.flush();
+  assert.equal([...objects.keys()].filter(key=>key.startsWith('rendered-pages/')&&key.includes('/'+page.id+'/')).length,0);
+  const safe=async request=>{assert.equal(request.headers.get('oai-authenticated-user-id'),null);return new Response('anonymous',{headers:{'Content-Type':'text/html'}});};
+  globalThis.__listEnv.LIST_BUILD_ID='build-one';await (await publicDelivery(new Request(model.SITE_ORIGIN+'/'+page.slug,{headers:{'oai-authenticated-user-id':'owner'}}),globalThis.__listEnv,fixture.ctx,safe)).text();await fixture.flush();
+  globalThis.__listEnv.LIST_BUILD_ID='build-two';const updated=await publicDelivery(new Request(model.SITE_ORIGIN+'/'+page.slug),globalThis.__listEnv,fixture.ctx,safe);assert.equal(updated.headers.get('X-List-Cache'),'page-render');await updated.text();await fixture.flush();
+ }finally{delete globalThis.__listEnv.LIST_BUILD_ID;await fixture.flush();fixture.restore();await item.DELETE(req('DELETE'),context(page.id));for(const key of objects.keys())if(key.startsWith('rendered-pages/')&&key.includes('/'+page.id+'/'))objects.delete(key);}
+});
+test('media bypasses identity and D1, streams unchanged bytes, caches, supports HEAD and conditional requests',async()=>{
+ const {publicDelivery}=await load('lib/public-delivery'),fixture=deliveryFixture(),key=crypto.randomUUID(),bytes=new Uint8Array([1,2,3,4,255]);
+ const db=globalThis.__listEnv.DB;await globalThis.__listEnv.BUCKET.put(key,bytes,{httpMetadata:{contentType:'image/png'}});
+ const read=(method='GET',headers={})=>publicDelivery(new Request(model.SITE_ORIGIN+'/media/'+key,{method,headers:{cookie:'irrelevant',...headers}}),globalThis.__listEnv,fixture.ctx,()=>{throw new Error('SSR must not run');});
+ try{
+  globalThis.__listEnv.DB={prepare(){throw new Error('Media must not query D1');}};
+  const first=await read();assert.deepEqual(new Uint8Array(await first.arrayBuffer()),bytes);assert.equal(first.headers.get('Content-Length'),'5');await fixture.flush();
+  const second=await read();assert.equal(second.headers.get('X-List-Cache'),'media-hit');assert.match(second.headers.get('Cache-Control'),/immutable/);await second.arrayBuffer();
+  const head=await read('HEAD');assert.equal(head.status,200);assert.equal(await head.text(),'');
+  const unchanged=await read('GET',{'if-none-match':'"test"'});assert.equal(unchanged.status,304);assert.equal(await unchanged.text(),'');
+ }finally{globalThis.__listEnv.DB=db;await fixture.flush();fixture.restore();await globalThis.__listEnv.BUCKET.delete(key);}
 });
 
 test("passwordless browser keys create isolated authors and cannot forge administrator headers",async()=>{
