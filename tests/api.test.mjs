@@ -818,3 +818,65 @@ test('touch dragging, cancellation, edge scrolling, keyboard ordering and tap me
   await event(handle('two'),'pointerdown');await act(()=>rendered.unmount());await event(window,'pointermove',490);await event(window,'pointerup',490);assert.equal(moves,2);assert.equal(frames.size,0);
  }finally{if(host.hasChildNodes())await act(()=>rendered.unmount());await window.happyDOM.abort();for(const [key,descriptor]of previous){if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];}}
 });
+
+test('editor deletion works in Telegram, pauses saving, and protects a newer article version', async () => {
+ const {Window}=await import('happy-dom'),{act}=await import('react');
+ const window=new Window({url:model.SITE_ORIGIN+'/_list/app?screen=edit'}),previousUser=globalThis.__listUser;
+ const timers=new Set(),nativeSetTimeout=globalThis.setTimeout,nativeClearTimeout=globalThis.clearTimeout;
+ const requests=[];let releaseDelete,deleteFinished,lastDelete;
+ const replacements={window,document:window.document,localStorage:window.localStorage,HTMLElement:window.HTMLElement,HTMLInputElement:window.HTMLInputElement,HTMLTextAreaElement:window.HTMLTextAreaElement,Element:window.Element,IS_REACT_ACT_ENVIRONMENT:true,
+  setTimeout:(callback,delay,...args)=>{const id=nativeSetTimeout(callback,delay,...args);timers.add(id);return id;},clearTimeout:id=>{timers.delete(id);nativeClearTimeout(id);},
+  fetch:async(url,init={})=>{
+   const method=init.method||'GET',requestUrl=new URL(url,model.SITE_ORIGIN),record={method,path:requestUrl.pathname,headers:new Headers(init.headers)};requests.push(record);
+   // A platform request can expose an empty stream even without a payload.
+   const body=method==='DELETE'&&!init.body?new ReadableStream({start(controller){controller.close();}}):init.body;
+   const request=new Request(requestUrl,{...init,...(body?{body,duplex:'half'}:{})});
+   if(method==='GET'&&requestUrl.pathname==='/api/articles')return collection.GET();
+   const id=requestUrl.pathname.split('/').pop();
+   if(method==='PUT')return item.PUT(request,context(id));
+   if(method==='DELETE'){
+    await new Promise(resolve=>{releaseDelete=resolve;});
+    const response=await item.DELETE(request,context(id));lastDelete={status:response.status,body:await response.clone().json()};deleteFinished?.();return response;
+   }
+   throw new Error('Unexpected editor request: '+method+' '+requestUrl.pathname);
+  }};
+ const previous=new Map(Object.keys(replacements).map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+ for(const [key,value]of Object.entries(replacements))Object.defineProperty(globalThis,key,{value,writable:true,configurable:true});
+ const host=window.document.createElement('div');window.document.body.append(host);
+ const {createRoot}=await import('react-dom/client'),rendered=createRoot(host);
+ const click=async(selector)=>{const button=host.querySelector(selector);assert.ok(button,selector);await act(()=>button.click());};
+ async function renderArticle(article){
+  window.localStorage.clear();
+  await act(()=>rendered.render(createElement(Editor,{key:article.id,user:owner,initial:article,signIn:'/access',signOut:'/access',context:'telegram',entry:{screen:'edit',articleId:article.id}})));
+  await click('[aria-label="Действия со статьёй"]');await click('.more-dropdown .danger');
+ }
+ async function confirmDeletion(){
+  const finished=new Promise(resolve=>{deleteFinished=resolve;});
+  await click('[role="dialog"] .btn-danger');assert.ok(releaseDelete);
+  await act(()=>window.dispatchEvent(new window.KeyboardEvent('keydown',{key:'s',ctrlKey:true,bubbles:true,cancelable:true})));
+  await act(async()=>{releaseDelete();releaseDelete=null;await finished;});
+ }
+ try{
+  globalThis.__listUser=owner;
+  const created=(await (await collection.POST(req('POST',{...model.demoArticle(),slug:'editor-delete-original',published:true}))).json()).article;
+  const current=(await (await item.PUT(req('PUT',{...created,slug:'editor-delete-renamed'}),context(created.id))).json()).article;
+  await renderArticle(current);await confirmDeletion();
+  assert.equal(lastDelete.status,200,JSON.stringify(lastDelete.body));
+  assert.ok(!host.querySelector('[role="dialog"]'));assert.ok(host.textContent.includes('Статья удалена.'));
+  assert.equal(await server.publishedArticle(created.slug),null);assert.equal(await server.publishedArticle(current.slug),null);
+  assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM backups WHERE article_id=? AND action='delete'").get(current.id).n,1);
+  assert.equal(requests.filter(r=>r.method==='PUT').length,0,'keyboard saving must not race deletion');
+  const deletion=requests.find(r=>r.method==='DELETE');assert.equal(deletion.headers.get('x-list-context'),'telegram');
+
+  const stale=(await (await collection.POST(req('POST',{...model.demoArticle(),slug:'editor-delete-stale',published:true}))).json()).article;
+  await renderArticle(stale);
+  const newer=(await (await item.PUT(req('PUT',{...stale,title:'Changed in another window'}),context(stale.id))).json()).article;
+  await confirmDeletion();
+  assert.equal(lastDelete.status,409);assert.ok(host.querySelector('[role="dialog"]'));
+  assert.equal((await server.publishedArticle(newer.slug)).title,newer.title);
+  assert.ok(host.textContent.includes('Статья изменилась. Обновите список перед удалением.'));
+ }finally{
+  releaseDelete?.();await act(()=>rendered.unmount());await window.happyDOM.abort();for(const id of timers)nativeClearTimeout(id);globalThis.__listUser=previousUser;
+  for(const [key,descriptor]of previous){if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];}
+ }
+});

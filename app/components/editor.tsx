@@ -292,13 +292,14 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
     link.href = url; link.download = suggestSlug(a.title) + ".md"; link.click(); URL.revokeObjectURL(url); setMoreOpen(false);
   }
   async function deleteArticle() {
-    if (!article.id || saveLock.current || uploading) return;
-    setBusy(true);
+    const current = articleRef.current;
+    if (!current.id || saveLock.current || uploading) return;
+    saveLock.current = true; setBusy(true);
     try {
-      await jsonRequest("/api/articles/" + article.id, { method: "DELETE" });
-      setArticles((items) => items.filter((a) => a.id !== article.id)); commit(blankArticle(user?.fullName || ""), false); setModal(null); notify("Статья удалена.");
+      await jsonRequest("/api/articles/" + current.id, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ version: current.version }) });
+      setArticles((items) => items.filter((a) => a.id !== current.id)); commit(blankArticle(user?.fullName || ""), false); setModal(null); notify("Статья удалена.");
     } catch (e) { notify((e as Error).message); }
-    finally { setBusy(false); }
+    finally { saveLock.current = false; setBusy(false); }
   }
   const closeModal = () => { if (!saveLock.current) setModal(null); };
   const wordCount = articleText(article).trim().split(/\s+/).filter(Boolean).length;
