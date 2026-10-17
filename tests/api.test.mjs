@@ -13,7 +13,7 @@ import { createElement } from "react";
 const root = process.cwd(), out = path.join(root, ".sites-runtime/test-build");
 await mkdir(out, { recursive: true });
 const files = [
-  "lib/article.ts", "lib/reading.ts", "lib/object-storage.ts",  "lib/standalone-auth.ts", "lib/browser-access.ts", "lib/client-access.ts", "lib/telegram-identity.ts", "lib/telegram-sources-legacy.ts", "lib/telegram-deploy.ts", "lib/telegram-sources.ts", "lib/server.ts", "lib/operations.ts", "app/components/article-view.tsx", "app/components/article-ending-editor.tsx", "app/components/interactive-blocks.tsx", "app/components/reader-experience.tsx", "app/components/editor.tsx",
+  "lib/article.ts", "lib/reading.ts", "lib/object-storage.ts",  "lib/standalone-auth.ts", "lib/browser-access.ts", "lib/client-access.ts", "lib/telegram-identity.ts", "lib/telegram-sources-legacy.ts", "lib/telegram-deploy.ts", "lib/telegram-sources.ts", "lib/server.ts", "lib/operations.ts", "lib/block-order.ts", "app/components/sortable-blocks.tsx", "app/components/article-view.tsx", "app/components/article-ending-editor.tsx", "app/components/interactive-blocks.tsx", "app/components/reader-experience.tsx", "app/components/editor.tsx",
   "app/api/articles/route.ts", "app/api/articles/[id]/route.ts", "app/api/slug/route.ts",
   "app/api/uploads/route.ts", "app/media/[id]/route.ts", "app/api/views/[id]/route.ts",
   "app/api/admin/route.ts", "app/api/admin/backups/[id]/route.ts", "app/api/reports/route.ts",
@@ -664,4 +664,58 @@ test('reader edit control belongs to the owner and publication action sits after
  const article=model.demoArticle(),ownerHtml=renderToStaticMarkup(createElement(ReaderExperience,{article,canEdit:true,editHref:'/?article=owned'})),publicHtml=renderToStaticMarkup(createElement(ReaderExperience,{article,canEdit:false}));
  assert.ok(ownerHtml.includes('Редактировать'));assert.ok(!publicHtml.includes('Редактировать'));
  const editor=renderToStaticMarkup(createElement(Editor,{user:owner,initial:article,signIn:'/access',signOut:'/access'}));assert.ok(!editor.includes('publish-top'));assert.ok(editor.indexOf('article-publish-bottom')>editor.indexOf('editable-blocks'));assert.ok(editor.includes('Окончание статьи'));assert.ok(editor.includes('Фон этого блока'));
+});
+
+test('drag destinations account for mixed block heights and preserve every block when reordered',async()=>{
+ const {blockDropIndex,reorderBlock,blockScrollStep}=await load('lib/block-order');
+ const blocks=[{id:'text',text:'Long text',background:'#ddeeff'},{id:'photo',url:'/media/photo'},{id:'quote',text:'Quote'}];
+ const bounds=[{id:'photo',top:100,height:400},{id:'quote',top:530,height:80}];
+ assert.equal(blockDropIndex(bounds,0),0);assert.equal(blockDropIndex(bounds,299),0);assert.equal(blockDropIndex(bounds,301),1);assert.equal(blockDropIndex(bounds,900),2);
+ const moved=reorderBlock(blocks,'text',blockDropIndex(bounds,900));assert.deepEqual(moved.map(b=>b.id),['photo','quote','text']);assert.equal(moved[2],blocks[0]);assert.equal(moved[2].background,'#ddeeff');assert.deepEqual(blocks.map(b=>b.id),['text','photo','quote']);
+ assert.deepEqual(reorderBlock(moved,'text',0),blocks);assert.equal(reorderBlock(blocks,'missing',1),blocks);assert.equal(reorderBlock(blocks,'text',0),blocks);assert.equal(reorderBlock(blocks,'text',NaN),blocks);
+ assert.ok(blockScrollStep(105,100,700,16)<0);assert.ok(blockScrollStep(695,100,700,16)>0);assert.equal(blockScrollStep(400,100,700,16),0);assert.equal(blockScrollStep(100,100,100,16),0);
+ globalThis.__listUser=owner;
+ const draft={...model.demoArticle(),slug:'reordered-blocks',blocks:[{id:'one',type:'paragraph',text:'First'},{id:'two',type:'quote',text:'Second'},{id:'three',type:'heading',text:'Third'}]};
+ const created=(await (await collection.POST(req('POST',draft))).json()).article;
+ const saved=await item.PUT(req('PUT',{...created,blocks:reorderBlock(created.blocks,'one',2)}),context(created.id));assert.equal(saved.status,200);
+ const read=(await (await item.GET(req('GET'),context(created.id))).json()).article;assert.deepEqual(read.blocks.map(b=>b.id),['two','three','one']);assert.equal(read.blocks[2].text,'First');
+});
+
+test('touch dragging, cancellation, edge scrolling, keyboard ordering and tap menus work through real DOM events',async()=>{
+ const {Window}=await import('happy-dom'),{act,useState}=await import('react'),{default:SortableBlocks}=await load('app/components/sortable-blocks'),{reorderBlock}=await load('lib/block-order');
+ const window=new Window({url:model.SITE_ORIGIN}),frames=new Map();let nextFrame=0,time=0,moves=0,order=[];
+ const replacements={window,document:window.document,HTMLElement:window.HTMLElement,Element:window.Element,ResizeObserver:class{observe(){}disconnect(){}},requestAnimationFrame:callback=>{frames.set(++nextFrame,callback);return nextFrame;},cancelAnimationFrame:id=>frames.delete(id),IS_REACT_ACT_ENVIRONMENT:true};
+ const previous=new Map(Object.keys(replacements).map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+ for(const [key,value]of Object.entries(replacements))Object.defineProperty(globalThis,key,{value,writable:true,configurable:true});
+ Object.defineProperty(window,'innerWidth',{value:390,configurable:true});Object.defineProperty(window,'innerHeight',{value:844,configurable:true});
+ const style=window.document.createElement('style');style.textContent=(await Promise.all(['app/globals.css','app/enhancements.css','app/public.css'].map(file=>readFile(path.join(root,file),'utf8')))).join('\n').replace(/^@import[^;]*;/gm,'');window.document.head.append(style);
+ const host=window.document.createElement('div');host.className='workspace workspace-v2';window.document.body.append(host);
+ const heights={one:72,two:220,three:90};
+ window.HTMLElement.prototype.getBoundingClientRect=function(){
+  const scroll=host.querySelector('.canvas-scroll'),offset=scroll?.scrollTop||0;
+  if(this.classList.contains('canvas-scroll'))return new window.DOMRect(0,0,390,500);
+  const rows=Array.from(host.querySelectorAll('[data-sortable-block]'));let top=100-offset;
+  for(const row of rows){if(row===this)return new window.DOMRect(26,top,338,heights[row.dataset.sortableBlock]);top+=heights[row.dataset.sortableBlock]+22;}
+  return new window.DOMRect(26,100-offset,338,top-100+offset);
+ };
+ function Workspace(){const [blocks,setBlocks]=useState([{id:'one',type:'paragraph',text:'First'},{id:'two',type:'image',text:'Photo'},{id:'three',type:'quote',text:'Third'}]);order=blocks.map(b=>b.id);return createElement('div',{className:'canvas-scroll'},createElement(SortableBlocks,{blocks,onSelect:()=>{},onRemove:id=>setBlocks(v=>v.filter(b=>b.id!==id)),onMove:(id,index)=>{moves++;setBlocks(v=>reorderBlock(v,id,index));}},block=>createElement('div',{className:'editable-block'},block.text)));}
+ const {createRoot}=await import('react-dom/client'),rendered=createRoot(host);
+ const handle=id=>host.querySelector('[data-sortable-block="'+id+'"] .block-grip');
+ const event=async(target,type,y=120,pointerId=7)=>{await act(()=>{target.dispatchEvent(new window.PointerEvent(type,{bubbles:true,cancelable:true,isPrimary:true,button:0,pointerType:'touch',pointerId,clientX:48,clientY:y}));});};
+ const tick=async()=>{const callbacks=[...frames.values()];frames.clear();time+=16;await act(()=>{callbacks.forEach(callback=>callback(time));});};
+ try{
+  await act(()=>rendered.render(createElement(Workspace)));
+  assert.equal(window.getComputedStyle(handle('one')).width,'44px');assert.equal(window.getComputedStyle(handle('one')).height,'44px');assert.equal(window.getComputedStyle(handle('one').parentElement).opacity,'1');assert.equal(window.getComputedStyle(handle('one').parentElement).left,'auto');
+  await event(handle('one'),'pointerdown');await event(window,'pointerup');await act(()=>handle('one').click());assert.ok(host.querySelector('[role=menu]'));assert.equal(moves,0);
+  await event(handle('one'),'pointerdown');await event(window,'pointermove',495);await tick();assert.ok(host.querySelector('.block-drag-preview'));assert.ok(host.querySelector('[data-sortable-block=three].drop-after'));assert.equal(moves,0);
+  await event(window,'pointerup',495);assert.deepEqual(order,['two','three','one']);assert.equal(moves,1);assert.equal(host.querySelector('.block-drag-preview'),null);
+  await act(()=>handle('one').click());assert.equal(host.querySelector('[role=menu]'),null);
+  await event(handle('one'),'pointerdown',490);await event(window,'pointermove',105);await tick();await event(window,'pointercancel',105);assert.deepEqual(order,['two','three','one']);assert.equal(moves,1);
+  await act(()=>handle('one').dispatchEvent(new window.KeyboardEvent('keydown',{key:'ArrowUp',bubbles:true,cancelable:true})));assert.deepEqual(order,['two','one','three']);assert.equal(moves,2);
+  await event(handle('two'),'pointerdown');await act(async()=>{await new Promise(resolve=>setTimeout(resolve,200));});await tick();assert.ok(host.querySelector('.block-drag-preview'));
+  await act(()=>window.dispatchEvent(new window.KeyboardEvent('keydown',{key:'Escape',bubbles:true,cancelable:true})));assert.equal(host.querySelector('.block-drag-preview'),null);assert.equal(moves,2);
+  const scroll=host.querySelector('.canvas-scroll');scroll.scrollTop=0;await event(handle('two'),'pointerdown');await event(window,'pointermove',499);await tick();await tick();assert.ok(scroll.scrollTop>0);await event(window,'pointercancel',499);assert.equal(moves,2);
+  await event(handle('two'),'pointerdown');await event(window,'pointermove',490,8);await tick();assert.equal(host.querySelector('.block-drag-preview'),null);await event(window,'pointercancel');
+  await event(handle('two'),'pointerdown');await act(()=>rendered.unmount());await event(window,'pointermove',490);await event(window,'pointerup',490);assert.equal(moves,2);assert.equal(frames.size,0);
+ }finally{if(host.hasChildNodes())await act(()=>rendered.unmount());await window.happyDOM.abort();for(const [key,descriptor]of previous){if(descriptor)Object.defineProperty(globalThis,key,descriptor);else delete globalThis[key];}}
 });

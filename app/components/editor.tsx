@@ -1,10 +1,12 @@
 "use client";
 import { useEffect, useLayoutEffect, useRef, useState, type TextareaHTMLAttributes } from "react";
-import { AlignCenter, AlignLeft, ArrowDown, ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, Bold, BookOpen, Check, CheckCircle2, ChevronDown, CircleHelp, Cloud, Copy, Download, Ellipsis, ExternalLink, Eye, FileText, GripVertical, Heading2, ImagePlus, Italic, Globe2, Shield, Link2, List, ListChecks, Loader2, LockKeyhole, Menu, Minus, Monitor, Palette, Plus, Quote, Redo2, Search, Send, Smartphone, Sparkles, SquareChevronDown, Trash2, Type, Undo2, Upload, X, Zap } from "lucide-react";
+import { AlignCenter, AlignLeft, ArrowLeft, ArrowRight, ArrowUpRight, Bold, BookOpen, Check, CheckCircle2, ChevronDown, CircleHelp, Cloud, Copy, Download, Ellipsis, ExternalLink, Eye, FileText, Heading2, ImagePlus, Italic, Globe2, Shield, Link2, List, ListChecks, Loader2, LockKeyhole, Menu, Minus, Monitor, Palette, Plus, Quote, Redo2, Search, Send, Smartphone, Sparkles, SquareChevronDown, Trash2, Type, Undo2, Upload, X, Zap } from "lucide-react";
 import { ACCENTS, THEMES, type Article, type Block, type BlockType, type TemplateKind, articleText, articleUrl, articleOutline, articleTemplate, blankArticle, normalizeArticle, normalizeSlug, readingTime, SITE_HOST, suggestSlug } from "@/lib/article";
 import { ArticleView, articleStyle } from "./article-view";
 import {clientFetch} from '@/lib/client-access';
 import ArticleEndingEditor from './article-ending-editor';
+import SortableBlocks from './sortable-blocks';
+import { reorderBlock } from '@/lib/block-order';
 
 type User = { userId: string; fullName: string | null; displayName: string };
 type Tab = "text" | "design" | "link";
@@ -64,7 +66,7 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
   const [uploading, setUploading] = useState(false), fileInput = useRef<HTMLInputElement>(null);
   const uploadTarget = useRef<string>("cover");
   const [activeBlock, setActiveBlock] = useState<string>(initial.blocks[0]?.id || "");
-  const [blockMenu, setBlockMenu] = useState(""), [addMenu, setAddMenu] = useState(false), [moreOpen, setMoreOpen] = useState(false);
+  const [addMenu, setAddMenu] = useState(false), [moreOpen, setMoreOpen] = useState(false);
   const focusedArea = useRef<HTMLTextAreaElement | null>(null);
   const [modal, setModal] = useState<ModalType>(null), pendingSwitch = useRef<(() => void) | null>(null);
   const [successArticle, setSuccessArticle] = useState<Article | null>(null);
@@ -227,15 +229,14 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
     if (type === "image") { selectUpload("new-image"); setAddMenu(false); return; }
     insertBlock({ id: crypto.randomUUID(), type, text: type === "button" ? "Открыть ссылку" : "", ...(type === "button" ? { url: "" } : {}), ...(type === "details" ? { label: "Подробнее" } : {}) });
   }
-  function moveBlock(id: string, direction: number) {
-    const blocks = [...articleRef.current.blocks], index = blocks.findIndex((b) => b.id === id), target = index + direction;
-    if (target < 0 || target >= blocks.length) return;
-    [blocks[index], blocks[target]] = [blocks[target], blocks[index]]; patch({ blocks });
+  function moveBlock(id: string, destination: number) {
+    const blocks = reorderBlock(articleRef.current.blocks, id, destination);
+    if (blocks !== articleRef.current.blocks) patch({ blocks });
   }
   function removeBlock(id: string) {
     const blocks = articleRef.current.blocks.filter((b) => b.id !== id);
     if (!blocks.length) blocks.push({ id: crypto.randomUUID(), type: "paragraph", text: "" });
-    patch({ blocks }); setBlockMenu("");
+    patch({ blocks });
   }
   function format(mark: string) {
     const el = focusedArea.current, block = articleRef.current.blocks.find((b) => b.id === activeBlock);
@@ -379,18 +380,17 @@ export default function Editor({ user, initial, signIn, signOut, adminAllowed = 
               <button onMouseDown={(e) => e.preventDefault()} onClick={() => format("*")} title="Курсив — выделите текст" aria-label="Курсив"><Italic size={17} /></button>
               <button onClick={() => addBlock("image")} title="Добавить фотографию" aria-label="Добавить фотографию"><ImagePlus size={18} /></button>
             </div>
-            <div className="editable-blocks article-body">
-              {article.blocks.map((block, index) => <div className={"editable-block block-" + block.type + (activeBlock === block.id ? " focused" : "")} key={block.id} onClick={()=>setActiveBlock(block.id)} style={{background:block.background,color:block.color,...(block.color?{"--ink":block.color,"--muted":block.color,"--accent":block.color}:{})} as React.CSSProperties}>
+            <SortableBlocks blocks={article.blocks} onMove={moveBlock} onSelect={setActiveBlock} onRemove={removeBlock}>
+              {(block) => <div className={"editable-block block-" + block.type + (activeBlock === block.id ? " focused" : "")} onClick={()=>setActiveBlock(block.id)} style={{background:block.background,color:block.color,...(block.color?{"--ink":block.color,"--muted":block.color,"--accent":block.color}:{})} as React.CSSProperties}>
                 {activeBlock===block.id&&<div className="block-color-controls"><label>Фон<input type="color" aria-label="Фон этого блока" value={block.background||THEMES[article.theme].bg} onChange={e=>updateBlock(block.id,{background:e.target.value})}/></label><label>Текст<input type="color" aria-label="Цвет текста этого блока" value={block.color||THEMES[article.theme].text} onChange={e=>updateBlock(block.id,{color:e.target.value})}/></label><button onClick={()=>updateBlock(block.id,{background:undefined,color:undefined})}>Сбросить цвета</button></div>}
-                <div className="block-controls"><button className="block-grip" aria-label="Настройки блока " title="Переместить или удалить блок" aria-expanded={blockMenu === block.id} onClick={() => { setBlockMenu(blockMenu === block.id ? "" : block.id); setActiveBlock(block.id); }}><GripVertical size={16} /></button>{blockMenu === block.id && <div className="dropdown block-dropdown"><button disabled={index === 0} onClick={() => moveBlock(block.id, -1)}><ArrowUp size={14} />Выше</button><button disabled={index === article.blocks.length - 1} onClick={() => moveBlock(block.id, 1)}><ArrowDown size={14} />Ниже</button><button className="danger" onClick={() => removeBlock(block.id)}><Trash2 size={14} />Удалить блок</button></div>}</div>
                 {block.type === "divider" ? <hr className="article-divider" /> : block.type === "image" ? <figure><img src={block.url} alt={block.text} /><input className="caption-input" aria-label="Описание изображения" value={block.text} placeholder="Подпись к изображению" onFocus={() => setActiveBlock(block.id)} onChange={(e) => updateBlock(block.id, { text: e.target.value })} /><button className="replace-block-image" onClick={() => selectUpload(block.id)}><ImagePlus size={14} />Заменить</button></figure> : block.type === "button" ? <div className="button-block-edit"><label>ТЕКСТ КНОПКИ<input value={block.text} aria-label="Текст кнопки" maxLength={100} onChange={(e) => updateBlock(block.id, { text: e.target.value })} onFocus={() => setActiveBlock(block.id)} /></label><label>ССЫЛКА<input value={block.url || ""} type="url" aria-label="Адрес кнопки" placeholder="https://…" onChange={(e) => updateBlock(block.id, { url: e.target.value })} onFocus={() => setActiveBlock(block.id)} /></label></div> : ["summary", "details", "checklist"].includes(block.type) ? <div className="special-block-editor">
                   <div className="special-block-label">{block.type === "summary" ? <Zap size={15} /> : block.type === "checklist" ? <ListChecks size={15} /> : <SquareChevronDown size={15} />}<span>{block.type === "summary" ? "Суть за минуту" : block.type === "checklist" ? "Чек-лист для читателя" : "Раскрывающийся блок"}</span></div>
                   {block.type === "details" && <input className="details-label-input" aria-label="Заголовок раскрывающегося блока" value={block.label || ""} maxLength={120} placeholder="Например: источники и подробности" onChange={(e) => updateBlock(block.id, { label: e.target.value })} />}
                   <AutoText id={"block-" + block.id} className="block-textarea" value={block.text} maxLength={20000} placeholder={block.type === "summary" ? "Расскажите в нескольких предложениях, что важно запомнить из этой статьи." : block.type === "checklist" ? "Напишите каждый пункт с новой строки" : "Подробности, которые читатель сможет открыть по желанию…"} aria-label={block.type === "summary" ? "Краткая версия статьи" : block.type === "checklist" ? "Пункты чек-листа" : "Содержимое раскрывающегося блока"} onChange={(e) => updateBlock(block.id, { text: e.target.value })} onFocus={(e) => { setActiveBlock(block.id); focusedArea.current = e.currentTarget; }} />
                   <p className="special-block-hint">{block.type === "summary" ? "Читатель сможет переключаться между сутью и полным текстом." : block.type === "checklist" ? "Отметки у каждого читателя свои и сохраняются на его устройстве." : "На странице этот текст спрячется под заголовком и раскроется по нажатию."}</p>
                 </div> : <AutoText id={"block-" + block.id} aria-label={block.type === "heading" ? "Заголовок раздела" : block.type === "quote" ? "Цитата" : block.type === "list" ? "Список: каждый пункт с новой строки" : "Текст статьи"} className="block-textarea" placeholder={block.type === "heading" ? "Заголовок раздела" : block.type === "quote" ? "Мысль, которую хочется выделить" : block.type === "list" ? "Каждый пункт с новой строки" : "Расскажите свою историю…"} value={block.text} maxLength={20000} onChange={(e) => updateBlock(block.id, { text: e.target.value })} onFocus={(e) => { setActiveBlock(block.id); focusedArea.current = e.currentTarget; }} />}
-              </div>)}
-            </div>
+              </div>}
+            </SortableBlocks>
             <div className="add-block-area"><div className="add-line" /><button className="add-block-button" onClick={() => setModal("blocks")}><Plus size={17} />Добавить блок</button><div className="add-line" /></div>
             <ArticleEndingEditor value={article.footer} onChange={footer=>patch({footer})}/>
             <div className="canvas-footer"><span>{wordCount} слов · {readingTime(article)} мин чтения</span><span>Слова имеют значение <span>✳</span></span></div>
