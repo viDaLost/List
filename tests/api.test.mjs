@@ -429,6 +429,73 @@ test("passwordless browser keys create isolated authors and cannot forge adminis
  const wrongKind=await access.issueAccessLink(first.user.userId,"connect");await assert.rejects(()=>access.redeemAccessLink(wrongKind));
 });
 
+test('a Telegram-linked owner keeps legacy management access without a browser article session',async()=>{
+ const access=await load('lib/browser-access'),{standaloneRequest}=await load('lib/standalone-auth');
+ const admin=await access.createAuthor();sqlite.prepare('UPDATE authors SET is_admin=1,telegram_id=? WHERE id=?').run('700001',admin.author.id);
+ const cookie=access.accessCookieName+'='+admin.key;
+ for(const route of ['/_list/telegram','/_list/admin','/_list/telegram/','/api/admin','/api/admin/telegram','/api/admin/backups/example']){
+  const prepared=await standaloneRequest(new Request(model.SITE_ORIGIN+route,{headers:{cookie}}));
+  assert.equal(prepared.headers.get('oai-authenticated-user-id'),admin.author.id);assert.equal(prepared.headers.get('oai-authenticated-user-admin'),'1');
+ }
+ for(const route of ['/','/api/articles','/api/articles/example','/_list/app','/api/admin-like','/_list/telegram/other']){
+  const prepared=await standaloneRequest(new Request(model.SITE_ORIGIN+route,{headers:{cookie,'oai-authenticated-user-id':admin.author.id,'oai-authenticated-user-admin':'1'}}));
+  assert.equal(prepared.headers.get('oai-authenticated-user-id'),null);
+ }
+});
+
+test('owner handoff is single-use and preserves the browser author independently of Telegram',async()=>{
+ const api=await load('app/api/access/route'),access=await load('lib/browser-access'),{standaloneRequest}=await load('lib/standalone-auth');
+ const browser=await access.createAuthor(),admin=await access.createAuthor();sqlite.prepare('UPDATE authors SET is_admin=1,telegram_id=? WHERE id=?').run('700002',admin.author.id);
+ const ticket=await access.issueAccessLink(admin.author.id),browserCookie=access.accessCookieName+'='+browser.key;
+ const handoff=()=>new Request(model.SITE_ORIGIN+'/api/access',{method:'POST',headers:{cookie:browserCookie,'Content-Type':'application/json',origin:model.SITE_ORIGIN,'cf-connecting-ip':'192.0.2.31'},body:JSON.stringify({action:'ticket',ticket})});
+ const result=await api.POST(handoff());assert.equal(result.status,200);assert.deepEqual(await result.json(),{owner:true});
+ const header=result.headers.get('set-cookie');assert.match(header,/^__Host-list-owner=/);assert.match(header,/Secure; HttpOnly; SameSite=Lax/);assert.ok(!header.includes(access.accessCookieName+'='));
+ const ownerCookie=header.split(';')[0],cookie=browserCookie+'; '+ownerCookie;
+ const state=await (await api.GET(new Request(model.SITE_ORIGIN+'/api/access',{headers:{cookie}}))).json();assert.equal(state.user.userId,browser.author.id);assert.equal(state.owner,true);assert.ok(!JSON.stringify(state).includes('700002'));
+ const management=await standaloneRequest(new Request(model.SITE_ORIGIN+'/_list/telegram',{headers:{cookie}}));assert.equal(management.headers.get('oai-authenticated-user-id'),admin.author.id);
+ const ordinary=await standaloneRequest(new Request(model.SITE_ORIGIN+'/api/articles',{headers:{cookie}}));assert.equal(ordinary.headers.get('oai-authenticated-user-id'),browser.author.id);assert.equal(ordinary.headers.get('oai-authenticated-user-admin'),'0');
+ assert.equal((await api.POST(handoff())).status,400);
+ const value=ownerCookie.slice(ownerCookie.indexOf('=')+1);assert.equal(await access.lookupAccessKey(value),null);
+ for(const mode of ['browser','telegram']){
+  const prepared=await standaloneRequest(new Request(model.SITE_ORIGIN+'/api/articles',{headers:{cookie:(mode==='telegram'?access.telegramCookieName:access.accessCookieName)+'='+value,'x-list-context':mode}}));assert.equal(prepared.headers.get('oai-authenticated-user-id'),null);
+ }
+ const isolated=await (await api.GET(new Request(model.SITE_ORIGIN+'/api/access',{headers:{cookie:ownerCookie}}))).json();assert.equal(isolated.user,null);assert.equal(isolated.owner,true);
+ const onlyOwner=await standaloneRequest(new Request(model.SITE_ORIGIN+'/api/articles',{headers:{cookie:ownerCookie}}));assert.equal(onlyOwner.headers.get('oai-authenticated-user-id'),null);
+ const previous=globalThis.__listUser;try{globalThis.__listUser=null;assert.equal((await collection.GET()).status,401);}finally{globalThis.__listUser=previous;}
+ assert.equal(await access.managementAuthor(new Request(model.SITE_ORIGIN,{headers:{cookie:ownerCookie+'; '+ownerCookie}})),null);
+ sqlite.prepare('UPDATE authors SET is_admin=0 WHERE id=?').run(admin.author.id);assert.equal(await access.managementAuthor(new Request(model.SITE_ORIGIN,{headers:{cookie:ownerCookie}})),null);
+});
+
+test('ordinary, expired, revoked and wrong-kind links cannot grant owner management access',async()=>{
+ const api=await load('app/api/access/route'),access=await load('lib/browser-access');
+ const ordinary=await access.createAuthor(),admin=await access.createAuthor();sqlite.prepare('UPDATE authors SET is_admin=1 WHERE id=?').run(admin.author.id);
+ const nonOwner=await access.issueAccessLink(ordinary.author.id),wrongKind=await access.issueAccessLink(admin.author.id,'connect'),expired=await access.issueAccessLink(admin.author.id,'restore',-1);
+ const redeem=ticket=>api.POST(new Request(model.SITE_ORIGIN+'/api/access',{method:'POST',headers:{'Content-Type':'application/json',origin:model.SITE_ORIGIN,'cf-connecting-ip':'192.0.2.32'},body:JSON.stringify({action:'ticket',ticket})}));
+ const before=sqlite.prepare('SELECT COUNT(*) n FROM access_keys').get().n;
+ for(const ticket of [nonOwner,wrongKind,expired,'invalid']){const response=await redeem(ticket);assert.equal(response.status,400);assert.equal(response.headers.get('set-cookie'),null);}
+ const revoked=await access.issueAccessLink(admin.author.id);sqlite.prepare('UPDATE authors SET is_admin=0 WHERE id=?').run(admin.author.id);assert.equal((await redeem(revoked)).status,400);
+ assert.equal(sqlite.prepare('SELECT COUNT(*) n FROM access_keys').get().n,before);
+ assert.equal(await access.managementAuthor(new Request(model.SITE_ORIGIN,{headers:{cookie:access.ownerCookieName+'='+ordinary.key}})),null);
+});
+
+test('cross-origin owner handoff cannot consume or leak a valid management grant',async()=>{
+ const api=await load('app/api/access/route'),access=await load('lib/browser-access');
+ const admin=await access.createAuthor();sqlite.prepare('UPDATE authors SET is_admin=1 WHERE id=?').run(admin.author.id);const ticket=await access.issueAccessLink(admin.author.id);
+ const response=await api.POST(new Request(model.SITE_ORIGIN+'/api/access',{method:'POST',headers:{'Content-Type':'application/json',origin:'https://evil.test'},body:JSON.stringify({action:'ticket',ticket})}));
+ assert.equal(response.status,403);assert.equal(response.headers.get('set-cookie'),null);
+ const grant=await access.redeemOwnerLink(ticket);assert.equal(grant.author.id,admin.author.id);
+});
+
+test('Telegram session rotation never deletes the separate owner management session',async()=>{
+ const access=await load('lib/browser-access'),identity=await load('lib/telegram-identity');
+ const created=await access.createAuthor();sqlite.prepare('UPDATE authors SET is_admin=1,telegram_id=? WHERE id=?').run('700003',created.author.id);
+ const grant=await access.redeemOwnerLink(await access.issueAccessLink(created.author.id)),author=grant.author;
+ for(let i=0;i<25;i++)await identity.telegramSession(author);
+ const restored=await access.managementAuthor(new Request(model.SITE_ORIGIN,{headers:{cookie:access.ownerCookieName+'='+grant.key}}));assert.equal(restored.id,author.id);
+ assert.equal(sqlite.prepare("SELECT COUNT(*) n FROM access_keys WHERE author_id=? AND key_hash NOT LIKE 'owner:%'").get(author.id).n,20);
+ assert.equal(await access.lookupAccessKey(grant.key),null);
+});
+
 test("Telegram identity is automatic, independent of browsers and inaccessible to other IDs",async()=>{
  const api=await load('app/api/telegram/bridge/route'),access=await load('lib/browser-access'),identity=await load('lib/telegram-identity'),{standaloneRequest}=await load('lib/standalone-auth');
  const secret='private-tg-bridge-'.repeat(3);globalThis.__listEnv.TELEGRAM_BRIDGE_SECRET=secret;

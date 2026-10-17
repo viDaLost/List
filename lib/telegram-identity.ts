@@ -26,6 +26,6 @@ export async function telegramAuthor(telegramId:string):Promise<AuthorRecord>{
 }
 export async function telegramSession(author:AuthorRecord){
  const key=randomKey(),now=Date.now();
- await sql().batch([sql().prepare('INSERT INTO access_keys (key_hash,author_id,created_at) VALUES (?,?,?)').bind(await hashKey(key),author.id,now),sql().prepare('DELETE FROM access_keys WHERE author_id=? AND key_hash NOT IN (SELECT key_hash FROM access_keys WHERE author_id=? ORDER BY created_at DESC,rowid DESC LIMIT 20)').bind(author.id,author.id)]);
+ await sql().batch([sql().prepare('INSERT INTO access_keys (key_hash,author_id,created_at) VALUES (?,?,?)').bind(await hashKey(key),author.id,now),sql().prepare("DELETE FROM access_keys WHERE author_id=? AND key_hash NOT LIKE 'owner:%' AND key_hash NOT IN (SELECT key_hash FROM access_keys WHERE author_id=? AND key_hash NOT LIKE 'owner:%' ORDER BY created_at DESC,rowid DESC LIMIT 20)").bind(author.id,author.id)]);
  return key;
 }
