@@ -13,6 +13,7 @@ import { createElement } from "react";
 const root = process.cwd(), out = path.join(root, ".sites-runtime/test-build");
 await mkdir(out, { recursive: true });
 const files = [
+  "lib/telegram-sources-list.ts",
   "lib/public-delivery.ts", "lib/storage-migration.ts", "app/api/admin/storage/route.ts",
   "lib/article.ts", "lib/reading.ts", "lib/object-storage.ts",  "lib/standalone-auth.ts", "lib/browser-access.ts", "lib/client-access.ts", "lib/telegram-identity.ts", "lib/telegram-sources-legacy.ts", "lib/telegram-deploy.ts", "lib/telegram-sources.ts", "lib/server.ts", "lib/operations.ts", "lib/block-order.ts", "app/components/sortable-blocks.tsx", "app/components/article-view.tsx", "app/components/article-ending-editor.tsx", "app/components/interactive-blocks.tsx", "app/components/reader-experience.tsx", "app/components/editor.tsx",
   "app/api/articles/route.ts", "app/api/articles/[id]/route.ts", "app/api/slug/route.ts",
@@ -654,9 +655,10 @@ test('native Telegram menus, edit links and confirmed deletion use the platform 
 
 test("phone setup deploys Telegram Serverless without persisting the CLI token",async()=>{
  const {deployTelegramBot}=await load("lib/telegram-deploy"),{telegramSources}=await load("lib/telegram-sources");
+ const {listTelegramSources}=await load('lib/telegram-sources-list');
  const token="app123:"+"x".repeat(32),secret="bridge-".repeat(8),calls=[];let migrated=false,runs=0,webhook=false;
  const transport=async(url,options)=>{const path=new URL(url).pathname.replace('/app123/manage','');const body=options.body?JSON.parse(options.body):undefined;calls.push({url,path,options,body});let result;
-  if(path==='/get')result={revision:7,canonical_modules:{}};
+  if(path==='/get')result={revision:7,canonical_modules:listTelegramSources};
   else if(path==='/migrate'&&options.method==='GET')result={db_changes:migrated?[]:[{kind:'create_table',table:'settings',status:'good'},{kind:'create_table',table:'users',status:'good'}]};
   else if(path==='/migrate'&&body.dry_run)result={db_changes:[{kind:'create_table',table:'settings',status:'good'},{kind:'create_table',table:'users',status:'good'}]};
   else if(path==='/migrate'){assert.deepEqual(body.apply,['create_table:settings','create_table:users']);assert.equal(body.schema,undefined);migrated=true;result={};}

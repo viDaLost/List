@@ -2,7 +2,7 @@ import {api} from 'sdk';
 import {bridge,SITE} from './bridge.js';
 export function appUrl(screen='articles',article){return SITE+'/_list/app?screen='+encodeURIComponent(screen)+(article?'&article='+encodeURIComponent(article):'');}
 export const menu={inline_keyboard:[[{text:'Мои статьи',callback_data:'articles:0'}],[{text:'Новая статья',web_app:{url:appUrl('new')}}],[{text:'Удалить статью',callback_data:'delete:0'}]]};
-export async function showMenu(chatId){await api.sendMessage({chat_id:chatId,text:'Лист — ваши статьи. Пишите, возвращайтесь к черновикам и редактируйте публикации. Доступ в Telegram определяется автоматически.',reply_markup:menu});}
+export async function showMenu(chatId){await api.sendMessage({chat_id:chatId,text:'Letro — ваши статьи. Пишите, возвращайтесь к черновикам и редактируйте публикации. Доступ в Telegram определяется автоматически.',reply_markup:menu});}
 export async function showArticles(chatId,telegramId,mode='articles',page=0){
  const data=await bridge({action:'articles',telegramId}),all=data.articles||[],start=Math.max(0,Math.min(Number(page)||0,Math.max(0,Math.ceil(all.length/8)-1)))*8;
  const rows=[];

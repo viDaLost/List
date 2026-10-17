@@ -105,7 +105,7 @@ export function articleUrl(slug: string): string { return SITE_ORIGIN + "/" + sl
 export function blankArticle(author = ""): Article {
   return { title: "", subtitle: "", author, slug: "", blocks: [{ id: crypto.randomUUID(), type: "paragraph", text: "" }], cover: "", theme: "paper", font: "serif", accent: "#a34e32", alignment: "left", wide: false, shareTitle: "", shareDescription: "", shareImage: "", published: false };
 }
-export function demoArticle(author = "Редакция Листа"): Article {
+export function demoArticle(author = "Редакция Letro"): Article {
   return {
     ...blankArticle(author), title: "Искусство замечать", subtitle: "Маленькая история о том, как вернуть внимание к собственной жизни.", slug: "iskusstvo-zamechat", cover: "/covers/stillness.png",
     shareTitle: "Замедлиться. Посмотреть. Заметить.", shareDescription: "Иногда самое интересное происходит там, где мы перестали смотреть. Несколько мыслей о внимании к простым вещам.",
@@ -114,7 +114,7 @@ export function demoArticle(author = "Редакция Листа"): Article {
       { id: "intro", type: "paragraph", text: "Мы привыкли искать вдохновение где-то далеко. В новых городах, больших событиях, чужих историях. Но иногда достаточно просто чуть медленнее пройти знакомой дорогой." },
       { id: "quote", type: "quote", text: "Внимание — это самый простой способ сделать обычный день особенным." },
       { id: "heading", type: "heading", text: "Начните с простого" },
-      { id: "body", type: "paragraph", text: "Заметить, как свет ложится на стену. Услышать разговор за соседним столиком. Сохранить мысль, которая появилась по дороге домой. У каждой такой детали есть своя история — и место на вашем листе." },
+      { id: "body", type: "paragraph", text: "Заметить, как свет ложится на стену. Услышать разговор за соседним столиком. Сохранить мысль, которая появилась по дороге домой. У каждой такой детали есть своя история — и место в вашей статье." },
       { id: "list", type: "checklist", text: "Оставьте пять минут без телефона.\nПосмотрите на привычное место по-новому.\nЗапишите одну мысль, которую хочется сохранить." },
       { id: "extra", type: "details", label: "Небольшой эксперимент на завтра", text: "Выберите один знакомый маршрут и попробуйте найти на нём три детали, которые раньше не замечали. Не нужно ничего оценивать — просто запомните их." },
     ],

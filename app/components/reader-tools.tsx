@@ -20,5 +20,5 @@ export default function ReaderTools({ id, slug, title }: { id?: string; slug: st
     try { await navigator.clipboard.writeText(url); setCopied(true); setTimeout(() => setCopied(false), 2500); }
     catch { window.prompt("Скопируйте ссылку", url); }
   }
-  return <nav className="reader-nav"><a href="/" className="wordmark"><span className="brand-icon">л</span>лист<span className="wordmark-dot">.</span></a><div className="reader-nav-right"><a href="/">Создать свой лист <ArrowUpRight size={14} /></a><button onClick={share} className="btn btn-light">{copied ? <Check size={16} /> : <Share2 size={16} />}<span>{copied ? "Скопировано" : "Поделиться"}</span></button></div></nav>;
+  return <nav className="reader-nav"><a href="/" className="wordmark"><span className="brand-icon">L</span>Letro<span className="wordmark-dot">.</span></a><div className="reader-nav-right"><a href="/">Создать статью <ArrowUpRight size={14} /></a><button onClick={share} className="btn btn-light">{copied ? <Check size={16} /> : <Share2 size={16} />}<span>{copied ? "Скопировано" : "Поделиться"}</span></button></div></nav>;
 }

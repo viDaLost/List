@@ -6,12 +6,14 @@ import "./public.css";
 export const viewport: Viewport = { width: "device-width", initialScale: 1, viewportFit: "cover" };
 
 export const metadata: Metadata = {
-  title: "Лист — публикации с характером",
+  title: "Letro — публикации с характером",
+  applicationName: "Letro",
+  appleWebApp: { title: "Letro" },
   description: "Простой редактор историй. Свой адрес, своё оформление и красивая карточка ссылки.",
   metadataBase: new URL(SITE_ORIGIN),
   icons: {
-    icon: "/favicon.svg",
-    shortcut: "/favicon.svg",
+    icon: "/favicon.svg?v=letro",
+    shortcut: "/favicon.svg?v=letro",
   },
 };
 

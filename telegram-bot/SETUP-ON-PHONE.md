@@ -1,6 +1,6 @@
 # Подключение с телефона
 
-Владелец открывает BotFather → бот Листа → Serverless → CLI Access и копирует `Access token`.
+Владелец открывает BotFather → бот Letro → Serverless → CLI Access и копирует `Access token`.
 На https://list.vitaledanilov.workers.dev/_list/telegram вставляет его в закрытую форму и нажимает «Подключить бота».
 Токен нужен один раз для загрузки или обновления кода; пользователям он не нужен.
 
