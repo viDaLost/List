@@ -3,6 +3,7 @@
 import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
+import ts from 'typescript';
 function files(dir, prefix = "") {
   return readdirSync(dir, { withFileTypes: true }).flatMap(e => e.isDirectory() ? files(path.join(dir, e.name), prefix + e.name + "/") : [prefix + e.name]);
 }
@@ -30,6 +31,23 @@ export default { async fetch(request,env,ctx) {
 } };` });
 const output = process.argv[2];
 if (!output) throw new Error("Provide an absolute output JSON path");
+// Workers can accept a lazy import during upload and fail only at runtime.
+// Validate the complete packaged module graph before publishing any update.
+const moduleNames=new Set(modules.map(module=>module.name));
+for(const module of modules){
+  const syntax=ts.createSourceFile(module.name,module.content,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
+  function visit(node){
+    let specifier;
+    if((ts.isImportDeclaration(node)||ts.isExportDeclaration(node))&&node.moduleSpecifier&&ts.isStringLiteralLike(node.moduleSpecifier))specifier=node.moduleSpecifier.text;
+    if(ts.isCallExpression(node)&&node.expression.kind===ts.SyntaxKind.ImportKeyword&&node.arguments[0]&&ts.isStringLiteralLike(node.arguments[0]))specifier=node.arguments[0].text;
+    if(specifier?.startsWith('.')){
+      const target=path.posix.normalize(path.posix.join(path.posix.dirname(module.name),specifier));
+      if(!moduleNames.has(target))throw new Error('Missing packaged Worker module: '+module.name+' -> '+specifier);
+    }
+    ts.forEachChild(node,visit);
+  }
+  visit(syntax);
+}
 const payload=JSON.stringify(modules);
 writeFileSync(output, output.endsWith(".gz") ? gzipSync(payload) : payload);
 console.log(JSON.stringify({ modules: modules.length, assets: Object.keys(assets).length, compressedBytes: modules.reduce((n,m) => n + gzipSync(m.content).length, 0) }));

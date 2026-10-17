@@ -1,11 +1,11 @@
 import { standaloneRequest } from "../lib/standalone-auth";
+import handler from 'vinext/server/fetch-handler';
 import {publicDelivery,drainResponse} from '../lib/public-delivery';
 export default {
   async fetch(request: Request, env: Cloudflare.Env, ctx: ExecutionContext) {
     const render=async(input:Request)=>{
       const authenticated=await standaloneRequest(input,env);
       if(authenticated instanceof Response)return authenticated;
-      const {default:handler}=await import('vinext/server/fetch-handler');
       return handler.fetch(authenticated,env,ctx);
     };
     const cached=await publicDelivery(request,env,ctx,render);
